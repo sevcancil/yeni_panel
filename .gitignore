@@ -1,0 +1,16 @@
+# Sistem Dosyaları
+.DS_Store
+Thumbs.db
+
+# VS Code Ayarları
+.vscode/
+
+# Veritabanı Ayar Dosyası (Güvenlik İçin Github'a Yüklenmez!)
+app/config/database.php
+
+# Yüklenen Resimler/Dosyalar (Depoyu şişirmemek için)
+public/uploads/
+
+# XAMPP/Sunucu Logları
+error_log
+access_log
