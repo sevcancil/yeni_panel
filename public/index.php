@@ -136,7 +136,7 @@ if ($can_view_finance) {
                             ?>
                         </div>
                     <?php endforeach; ?>
-                    <small class="text-muted ms-2" style="font-size: 0.8rem;">
+                    <small class="text-danger ms-2" style="font-size: 0.8rem;">
                         (Son Güncelleme: <?php echo date('d.m.Y H:i', strtotime($currencies[0]['updated_at'])); ?>)
                     </small>
                 </div>

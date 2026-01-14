@@ -15,7 +15,7 @@ function updateExchangeRates() {
 
         foreach ($xml->Currency as $currency) {
             $code = (string)$currency['Kod'];
-            $rate = (float)$currency->BanknoteSelling; // Efektif Satış Kurunu alıyoruz (Genelde bu kullanılır)
+            $rate = (float)$currency->ForexBuying; // Efektif Satış Kurunu alıyoruz (Genelde bu kullanılır)
             
             // Eğer BanknoteSelling boşsa ForexSelling (Döviz Satış) al
             if ($rate == 0) {

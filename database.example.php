@@ -40,7 +40,7 @@ CREATE TABLE `transactions` (
 CREATE TABLE `payment_channels` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(100) NOT NULL,              -- Örn: Merkez Kasa, Garanti Bankası
-  `type` enum('cash','bank') DEFAULT 'bank', -- Nakit mi Banka mı?
+  `type` enum('card','bank') DEFAULT 'bank', -- Nakit mi Banka mı?
   `account_number` varchar(50) DEFAULT NULL, -- IBAN veya Hesap No
   `current_balance` decimal(15,2) DEFAULT 0.00, -- Kasa Bakiyesi
   `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
@@ -127,3 +127,41 @@ ADD COLUMN `needs_control` tinyint(1) DEFAULT 0; -- 0: Tamam, 1: Kontrol Lazım
 ALTER TABLE `transactions`
 ADD CONSTRAINT `fk_trans_dept`
 FOREIGN KEY (`department_id`) REFERENCES `departments`(`id`) ON DELETE SET NULL;
+
+-- Döviz cinsi, Limit ve Ekstre Borcu sütunlarını ekleyelim
+ALTER TABLE `payment_channels`
+ADD COLUMN `currency` varchar(3) DEFAULT 'TRY' AFTER `name`,
+ADD COLUMN `credit_limit` decimal(15,2) DEFAULT 0.00, -- Kart Limiti
+ADD COLUMN `statement_debt` decimal(15,2) DEFAULT 0.00, -- Ekstre Borcu
+ADD COLUMN `available_balance` decimal(15,2) DEFAULT 0.00; -- Kullanılabilir Bakiye
+
+ALTER TABLE `payment_channels`
+ADD COLUMN `is_blocked` TINYINT(1) DEFAULT 0,
+ADD COLUMN `block_reason` VARCHAR(255) NULL;
+
+ALTER TABLE `customers`
+ADD COLUMN `customer_type` ENUM('real', 'legal') DEFAULT 'legal' AFTER `id`,
+ADD COLUMN `customer_code` VARCHAR(50) NULL AFTER `customer_type`,
+ADD COLUMN `tc_number` VARCHAR(11) NULL,
+ADD COLUMN `passport_number` VARCHAR(20) NULL,
+ADD COLUMN `fax` VARCHAR(20) NULL,
+ADD COLUMN `country` VARCHAR(50) DEFAULT 'Türkiye',
+ADD COLUMN `city` VARCHAR(50) DEFAULT 'İstanbul',
+ADD COLUMN `opening_balance` DECIMAL(15,2) DEFAULT 0.00,
+ADD COLUMN `opening_balance_currency` VARCHAR(3) DEFAULT 'TRY',
+ADD COLUMN `opening_balance_date` DATE NULL;
+
+CREATE TABLE `payment_methods` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `title` varchar(100) NOT NULL,
+  `created_at` datetime DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Örnek veriler ekleyelim
+INSERT INTO `payment_methods` (`title`) VALUES 
+('Nakit'),
+('Kredi Kartı'),
+('Havale / EFT'),
+('Mail Order'),
+('Çek / Senet');
