@@ -66,4 +66,27 @@ function has_permission($required_perm) {
     $permissions = json_decode($user['permissions'], true) ?? [];
     return in_array($required_perm, $permissions);
 }
+
+// --- LOGLAMA FONKSİYONU ---
+function log_action($pdo, $module, $record_id, $action, $description) {
+    if (session_status() === PHP_SESSION_NONE) { session_start(); }
+    
+    $user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : 0;
+    $ip = $_SERVER['REMOTE_ADDR'];
+    
+    $sql = "INSERT INTO activity_logs (user_id, module, record_id, action, description, ip_address) 
+            VALUES (?, ?, ?, ?, ?, ?)";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$user_id, $module, $record_id, $action, $description, $ip]);
+}
+
+// --- PARA BİÇİMLENDİRME FONKSİYONU (TR FORMATI) ---
+function para($tutar) {
+    // Veri tabanından gelen null değerleri 0 say
+    $tutar = (float)$tutar;
+    // 2: Kuruş hanesi sayısı
+    // ',': Kuruş ayırıcı (Virgül)
+    // '.': Binlik ayırıcı (Nokta)
+    return number_format($tutar, 2, ',', '.');
+}
 ?>

@@ -14,13 +14,20 @@ $message = '';
 if (isset($_GET['delete_id'])) {
     if(has_permission('delete_data')) {
         $del_id = (int)$_GET['delete_id'];
+        
+        $stmt = $pdo->prepare("SELECT company_name FROM customers WHERE id = ?");
+        $stmt->execute([$del_id]);
+        $del_name = $stmt->fetchColumn();
+
         $check = $pdo->prepare("SELECT COUNT(*) FROM transactions WHERE customer_id = ?");
         $check->execute([$del_id]);
+        
         if ($check->fetchColumn() > 0) {
             $message = '<div class="alert alert-danger">Bu cariye ait hareketler var! Silemezsiniz.</div>';
         } else {
             $stmt = $pdo->prepare("DELETE FROM customers WHERE id = ?");
             $stmt->execute([$del_id]);
+            log_action($pdo, 'customer', $del_id, 'delete', "$del_name carisi silindi.");
             header("Location: customers.php?msg=deleted");
             exit;
         }
@@ -36,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $type = $_POST['customer_type']; 
     $title = temizle($_POST['company_name']); 
     $code = temizle($_POST['customer_code']);
+    $is_temporary = isset($_POST['is_temporary']) ? 1 : 0; // GEÇİCİ Mİ?
     
     // Kimlik Verileri
     $tc = !empty($_POST['tc_number']) ? temizle($_POST['tc_number']) : null;
@@ -43,6 +51,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $tax_office = temizle($_POST['tax_office']);
     $tax_number = !empty($_POST['tax_number']) ? temizle($_POST['tax_number']) : null;
     
+    // GEÇİCİ KAYIT MANTIĞI
+    if ($is_temporary) {
+        // Eğer geçici ise ve TC/Vergi boşsa, sistem otomatik G-RANDOM kod üretir.
+        $random_suffix = time() . rand(100,999);
+        
+        if ($type == 'real' && empty($tc) && empty($passport)) {
+            $tc = 'G-TC-' . $random_suffix; 
+        } 
+        if ($type == 'legal' && empty($tax_number)) {
+            $tax_number = 'G-VN-' . $random_suffix;
+        }
+    }
+
     // Diğerleri
     $contact = temizle($_POST['contact_name']);
     $email = temizle($_POST['email']);
@@ -65,13 +86,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $params_check = [];
     $check_active = false;
 
-    // Kural: Tüzel ise Vergi No, Gerçek (TC'li) ise TC, Yabancı ise Pasaport kontrol et
-    if ($type == 'legal' && !empty($tax_number)) {
+    // Geçici kodları (G- ile başlayan) mükerrerlik kontrolüne sokma, çünkü random ürettik.
+    // Sadece gerçek verileri kontrol et.
+    if ($type == 'legal' && !empty($tax_number) && strpos($tax_number, 'G-VN-') === false) {
         $sql_check .= "tax_number = ?";
         $params_check[] = $tax_number;
         $check_active = true;
     } elseif ($type == 'real') {
-        if (!empty($tc)) {
+        if (!empty($tc) && strpos($tc, 'G-TC-') === false) {
             $sql_check .= "tc_number = ?";
             $params_check[] = $tc;
             $check_active = true;
@@ -108,6 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $type, $code, $title, $contact, $tc, $passport, $tax_office, $tax_number,
                 $email, $phone, $fax, $country, $city, $address, $edit_id
             ]);
+            log_action($pdo, 'customer', $edit_id, 'update', "$title carisi güncellendi.");
             $message = '<div class="alert alert-success">Cari kart güncellendi!</div>';
         } else {
             // YENİ EKLEME
@@ -125,6 +148,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $email, $phone, $fax, $country, $city, $address,
                 $op_balance, $op_curr, $op_date, $current_balance
             ]);
+            
+            $last_id = $pdo->lastInsertId();
+            log_action($pdo, 'customer', $last_id, 'create', "$title ($code) yeni cari kartı oluşturuldu.");
             $message = '<div class="alert alert-success">Yeni cari kart oluşturuldu!</div>';
         }
     } elseif (empty($title)) {
@@ -143,6 +169,12 @@ $customers = $pdo->query($sql)->fetchAll();
     <title>Cari Kartlar</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .missing-info {
+            background-color: #fff3cd; /* Sarımsı arka plan */
+            border-left: 5px solid #ffc107;
+        }
+    </style>
 </head>
 <body>
     <?php include 'includes/navbar.php'; ?>
@@ -164,7 +196,7 @@ $customers = $pdo->query($sql)->fetchAll();
         <div class="card shadow">
             <div class="card-body p-0">
                 <div class="table-responsive">
-                    <table class="table table-hover table-striped table-bordered mb-0 align-middle">
+                    <table class="table table-hover table-bordered mb-0 align-middle">
                         <thead class="table-light">
                             <tr>
                                 <th>Kod</th>
@@ -172,13 +204,24 @@ $customers = $pdo->query($sql)->fetchAll();
                                 <th>Cari Başlık / Ünvan</th>
                                 <th class="text-center">İşlem Adedi</th>
                                 <th class="text-end">Bakiye</th>
-                                <th class="text-center">İşlemler</th>
+                                <th class="text-center" width="200">İşlemler</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (count($customers) > 0): ?>
                                 <?php foreach ($customers as $c): ?>
-                                    <tr>
+                                    
+                                    <?php 
+                                        // EKSİK BİLGİ KONTROLÜ
+                                        // Eğer TC veya Vergi No "G-" (Geçici) ile başlıyorsa eksiktir.
+                                        $is_missing = false;
+                                        if (strpos($c['tc_number'], 'G-TC-') !== false || strpos($c['tax_number'], 'G-VN-') !== false) {
+                                            $is_missing = true;
+                                        }
+                                        $row_class = $is_missing ? 'missing-info' : '';
+                                    ?>
+
+                                    <tr class="<?php echo $row_class; ?>">
                                         <td><span class="badge bg-secondary"><?php echo guvenli_html($c['customer_code']); ?></span></td>
                                         <td>
                                             <?php if($c['customer_type'] == 'real'): ?>
@@ -189,6 +232,11 @@ $customers = $pdo->query($sql)->fetchAll();
                                         </td>
                                         <td>
                                             <strong><?php echo guvenli_html($c['company_name']); ?></strong>
+                                            
+                                            <?php if($is_missing): ?>
+                                                <br><span class="badge bg-warning text-dark"><i class="fa fa-exclamation-triangle"></i> EKSİK BİLGİ (Geçici Kayıt)</span>
+                                            <?php endif; ?>
+
                                             <?php if(!empty($c['passport_number'])): ?>
                                                 <br><small class="text-muted"><i class="fa fa-globe"></i> Yabancı Uyruklu</small>
                                             <?php endif; ?>
@@ -198,7 +246,10 @@ $customers = $pdo->query($sql)->fetchAll();
                                             <?php echo number_format($c['current_balance'], 2, ',', '.'); ?> ₺
                                         </td>
                                         <td class="text-center">
-                                            <button type="button" class="btn btn-sm btn-primary" onclick='openModal("edit", <?php echo json_encode($c); ?>)'>
+                                            <button type="button" class="btn btn-sm btn-secondary" onclick="showHistory(<?php echo $c['id']; ?>, '<?php echo guvenli_html($c['company_name']); ?>')" title="Geçmiş">
+                                                <i class="fa fa-history"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-primary" onclick='openModal("edit", <?php echo json_encode($c); ?>)' title="Düzenle">
                                                 <i class="fa fa-edit"></i>
                                             </button>
                                             <a href="customer-details.php?id=<?php echo $c['id']; ?>" class="btn btn-sm btn-info text-white" title="Ekstre">
@@ -217,6 +268,23 @@ $customers = $pdo->query($sql)->fetchAll();
                             <?php endif; ?>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="historyModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-secondary text-white">
+                    <h5 class="modal-title"><i class="fa fa-history me-2"></i> İşlem Geçmişi</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <h6 class="text-center fw-bold text-primary mb-3" id="historyTargetName"></h6>
+                    <div id="historyContent" class="text-center">
+                        <div class="spinner-border text-primary" role="status"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -254,6 +322,19 @@ $customers = $pdo->query($sql)->fetchAll();
                         <hr>
 
                         <h6 class="text-primary"><i class="fa fa-id-card"></i> Kimlik & Vergi Bilgileri</h6>
+                        
+                        <div class="alert alert-warning d-flex align-items-center mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="is_temporary" id="is_temporary" onchange="toggleTemporary()">
+                                <label class="form-check-label fw-bold" for="is_temporary">
+                                    Bilgiler Eksik / Geçici Kayıt Oluştur
+                                </label>
+                            </div>
+                            <div class="ms-3 small">
+                                <i class="fa fa-info-circle"></i> Eğer TC veya Vergi No henüz gelmediyse bunu işaretleyin. Sistem geçici bir numara atayacaktır. Daha sonra güncellemeyi unutmayın!
+                            </div>
+                        </div>
+
                         <div class="row mb-3 p-3 bg-light rounded border">
                             
                             <div class="col-md-6 legal-field">
@@ -357,63 +438,95 @@ $customers = $pdo->query($sql)->fetchAll();
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         var modal = new bootstrap.Modal(document.getElementById('customerModal'));
+        var historyModal = new bootstrap.Modal(document.getElementById('historyModal'));
+
+        function showHistory(id, name) {
+            document.getElementById('historyTargetName').innerText = name + " - Geçmiş İşlemler";
+            document.getElementById('historyContent').innerHTML = '<div class="spinner-border text-primary" role="status"></div>';
+            historyModal.show();
+
+            var formData = new FormData();
+            formData.append('module', 'customer');
+            formData.append('record_id', id);
+
+            fetch('get-log-history.php', { method: 'POST', body: formData })
+            .then(response => response.text())
+            .then(data => { document.getElementById('historyContent').innerHTML = data; })
+            .catch(error => { document.getElementById('historyContent').innerHTML = '<div class="alert alert-danger">Veri çekilemedi.</div>'; });
+        }
+
+        // --- GEÇİCİ KAYIT KONTROLÜ ---
+        function toggleTemporary() {
+            var isTemp = document.getElementById('is_temporary').checked;
+            var taxInput = document.getElementById('tax_number');
+            var tcInput = document.getElementById('tc_number');
+            var passInput = document.getElementById('passport_number');
+
+            if (isTemp) {
+                // Geçici ise zorunlulukları kaldır
+                taxInput.required = false;
+                tcInput.required = false;
+                passInput.required = false;
+                
+                // Kullanıcıya bilgi ver
+                taxInput.placeholder = "Otomatik Geçici No Atanacak";
+                tcInput.placeholder = "Otomatik Geçici No Atanacak";
+            } else {
+                // Değilse normal moda dön (Type kontrolünü tekrar çalıştır)
+                taxInput.placeholder = "10 Haneli";
+                tcInput.placeholder = "11 Haneli";
+                toggleTypeFields();
+            }
+        }
 
         function toggleTypeFields() {
+            // Eğer "Geçici" işaretliyse zorunluluk koyma
+            if(document.getElementById('is_temporary').checked) return;
+
             var type = document.getElementById('customer_type').value;
             var legalFields = document.querySelectorAll('.legal-field');
             var realFields = document.querySelectorAll('.real-field');
 
             if (type === 'real') {
-                // Gerçek Kişi
                 legalFields.forEach(el => el.classList.add('d-none'));
                 realFields.forEach(el => el.classList.remove('d-none'));
-                
-                // Yabancı kontrolünü çalıştır
                 toggleForeigner();
-                
-                // Vergi No Zorunluluğunu Kaldır
                 document.getElementById('tax_number').required = false;
             } else {
-                // Tüzel Kişi
                 legalFields.forEach(el => el.classList.remove('d-none'));
                 realFields.forEach(el => el.classList.add('d-none'));
-                
-                // Vergi No Zorunlu
                 document.getElementById('tax_number').required = true;
-                // TC ve Pasaport Zorunluluğunu Kaldır
                 document.getElementById('tc_number').required = false;
                 document.getElementById('passport_number').required = false;
             }
         }
 
         function toggleForeigner() {
+            if(document.getElementById('is_temporary').checked) return;
+
             var isForeigner = document.getElementById('is_foreigner').checked;
             var trFields = document.querySelectorAll('.tr-citizen');
             var foreignFields = document.querySelectorAll('.foreigner');
 
             if (isForeigner) {
-                // Yabancı: Pasaport Göster
                 trFields.forEach(el => el.classList.add('d-none'));
                 foreignFields.forEach(el => el.classList.remove('d-none'));
-                
                 document.getElementById('passport_number').required = true;
                 document.getElementById('tc_number').required = false;
-                document.getElementById('tc_number').value = ''; // TC'yi temizle
+                document.getElementById('tc_number').value = '';
             } else {
-                // Yerli: TC Göster
                 trFields.forEach(el => el.classList.remove('d-none'));
                 foreignFields.forEach(el => el.classList.add('d-none'));
-                
                 document.getElementById('tc_number').required = true;
                 document.getElementById('passport_number').required = false;
-                document.getElementById('passport_number').value = ''; // Pasaportu temizle
+                document.getElementById('passport_number').value = '';
             }
         }
 
         function openModal(mode, data = null) {
             document.getElementById('customerForm').reset();
-            // Checkbox'ı sıfırla
             document.getElementById('is_foreigner').checked = false;
+            document.getElementById('is_temporary').checked = false;
             
             if (mode === 'edit' && data) {
                 document.getElementById('modalTitle').innerText = "Cari Kartı Düzenle";
@@ -424,7 +537,12 @@ $customers = $pdo->query($sql)->fetchAll();
                 document.getElementById('company_name').value = data.company_name;
                 document.getElementById('contact_name').value = data.contact_name;
                 
-                // Yabancı mı kontrolü
+                // Veri içinde G-TC veya G-VN varsa "Geçici" olarak işaretle
+                if ((data.tc_number && data.tc_number.includes('G-TC-')) || 
+                    (data.tax_number && data.tax_number.includes('G-VN-'))) {
+                    document.getElementById('is_temporary').checked = true;
+                }
+
                 if (data.customer_type === 'real' && data.passport_number) {
                     document.getElementById('is_foreigner').checked = true;
                 }
@@ -452,6 +570,7 @@ $customers = $pdo->query($sql)->fetchAll();
             }
             
             toggleTypeFields();
+            toggleTemporary(); // Başlangıç durumunu ayarla
             modal.show();
         }
     </script>

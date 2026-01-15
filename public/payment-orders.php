@@ -82,7 +82,7 @@ $can_approve = has_permission('approve_payment');
 
         <div class="card shadow">
             <div class="card-header bg-dark text-white d-flex justify-content-between">
-                <h5 class="mb-0">Ödeme Emirleri Listesi</h5>
+                <h5 class="mb-0">Ödeme Listesi</h5>
                 <span>Toplam Kayıt: <?php echo count($orders); ?></span>
             </div>
             <div class="card-body p-0">

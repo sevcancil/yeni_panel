@@ -165,3 +165,39 @@ INSERT INTO `payment_methods` (`title`) VALUES
 ('Havale / EFT'),
 ('Mail Order'),
 ('Çek / Senet');
+
+CREATE TABLE `collection_channels` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `title` varchar(100) NOT NULL,
+  `created_at` datetime DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Örnek veriler
+INSERT INTO `collection_channels` (`title`) VALUES 
+('DENİZBANK.USD'),
+('Ziraat.TL'),
+('Ziraat.USD'),
+('Ziraat.EURO'),
+('Ziraat Pos');
+
+CREATE TABLE `activity_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL,
+  `module` varchar(50) NOT NULL, -- Örn: customer, project, invoice
+  `record_id` int(11) NOT NULL, -- Hangi kayıt? (ID'si)
+  `action` varchar(50) NOT NULL, -- create, update, delete
+  `description` text NOT NULL, -- "Ahmet cari kartı güncelledi"
+  `ip_address` varchar(45) DEFAULT NULL,
+  `created_at` datetime DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE `tour_codes`
+ADD COLUMN `employer` VARCHAR(255) NULL AFTER `name`;
+
+ALTER TABLE `transactions`
+ADD COLUMN `priority` TINYINT(1) DEFAULT 0, -- 1: Yüksek Öncelik, 0: Normal
+ADD COLUMN `is_approved` TINYINT(1) DEFAULT 0, -- 1: Onaylı, 0: Bekliyor
+ADD COLUMN `is_checked` TINYINT(1) DEFAULT 0, -- 1: Kontrol Edildi
+ADD COLUMN `exchange_rate` DECIMAL(10,4) DEFAULT 1.0000; -- O günkü kur

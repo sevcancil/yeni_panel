@@ -1,3 +1,14 @@
+<?php
+// --- NAVBAR İÇİNDE SQL SORGUSU ---
+// Bu dosya her sayfada include edildiği için, eksik bilgi sayısını burada hesaplayabiliriz.
+// Eğer veritabanı bağlantısı ($pdo) yoksa hata vermesin diye kontrol ediyoruz.
+if (isset($pdo)) {
+    $sql_missing = "SELECT COUNT(*) FROM customers WHERE tc_number LIKE 'G-TC-%' OR tax_number LIKE 'G-VN-%'";
+    $missing_count = $pdo->query($sql_missing)->fetchColumn();
+} else {
+    $missing_count = 0;
+}
+?>
 <style>
     :root {
         --sidebar-width: 260px;
@@ -67,6 +78,24 @@
     .nav-link:hover, .nav-link.active { background-color: rgba(255,255,255, 0.1); color: #fff; }
     .nav-link i { min-width: 30px; text-align: center; margin-right: 10px; }
     
+    /* Notification Badge */
+    .badge-notification {
+        margin-left: auto; /* Sağa yasla */
+        background-color: #ffc107;
+        color: #000;
+        font-size: 0.75rem;
+        font-weight: bold;
+        padding: 2px 6px;
+        border-radius: 4px;
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.1); }
+        100% { transform: scale(1); }
+    }
+
     /* KIRMIZI LINKLER (ADMIN) */
     .nav-link.text-danger { color: #ff6b6b !important; }
     .nav-link.text-danger:hover { background-color: rgba(220, 53, 69, 0.2); color: #fff !important; }
@@ -104,6 +133,9 @@
             <li>
                 <a href="customers.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'customers.php' ? 'active' : ''; ?>" title="Cari Hesaplar">
                     <i class="fa fa-address-card"></i> <span>Cari Kartlar</span>
+                    <?php if(isset($missing_count) && $missing_count > 0): ?>
+                        <span class="badge-notification" title="<?php echo $missing_count; ?> carinin bilgileri eksik!"><?php echo $missing_count; ?></span>
+                    <?php endif; ?>
                 </a>
             </li>
             
