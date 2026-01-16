@@ -14,3 +14,6 @@ public/uploads/
 # XAMPP/Sunucu Logları
 error_log
 access_log
+
+#Eski Veri Tabanı Dosyası
+old_panel.sql

@@ -4,52 +4,30 @@ require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
 
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
-
-// Filtreler
-$where = "WHERE payment_status = 'unpaid'"; // Sadece ödenmemişler
-$params = [];
-
-if (!empty($_GET['dept_id'])) {
-    $where .= " AND t.department_id = ?";
-    $params[] = $_GET['dept_id'];
-}
-if (!empty($_GET['q'])) {
-    $where .= " AND (c.company_name LIKE ? OR t.description LIKE ?)";
-    $params[] = "%".$_GET['q']."%";
-    $params[] = "%".$_GET['q']."%";
-}
-
-// Sorgu
-$sql = "SELECT t.*, c.company_name, d.name as dept_name, tc.code as tour_code 
-        FROM transactions t 
-        JOIN customers c ON t.customer_id = c.id 
-        LEFT JOIN departments d ON t.department_id = d.id
-        LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id
-        $where
-        ORDER BY t.date ASC";
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$orders = $stmt->fetchAll();
-
-// Bölümleri Çek (Filtre için)
-$depts = $pdo->query("SELECT * FROM departments")->fetchAll();
-
-$can_approve = has_permission('approve_payment');
 ?>
 <!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Ödeme Emirleri ve Onay</title>
+    <title>Ödeme Listesi</title>
+    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css">
+    
     <style>
-        .toggle-btn { cursor: pointer; opacity: 0.3; transition: 0.3s; font-size: 1.2rem; }
-        .toggle-btn.active { opacity: 1; transform: scale(1.2); }
-        .text-approval.active { color: green; }
-        .text-priority.active { color: red; }
-        .text-control.active { color: orange; }
-        .table-sm td, .table-sm th { vertical-align: middle; }
+        .filter-input { width: 100%; padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px; }
+        table.dataTable thead th { vertical-align: middle; white-space: nowrap; font-size: 0.9rem; }
+        table.dataTable tbody td { vertical-align: middle; font-size: 0.9rem; }
+        
+        /* SİZİN CSS KODLARINIZ */
+        .toggle-btn { cursor: pointer; opacity: 0.3; transition: all 0.2s; font-size: 1.2rem; }
+        .toggle-btn:hover { transform: scale(1.2); opacity: 0.6; }
+        .toggle-btn.active { opacity: 1; transform: scale(1.1); }
+        
+        .text-approval.active { color: #198754; } /* Yeşil */
+        .text-priority.active { color: #dc3545; } /* Kırmızı */
+        .text-control.active  { color: #fd7e14; } /* Turuncu */
     </style>
 </head>
 <body>
@@ -57,146 +35,132 @@ $can_approve = has_permission('approve_payment');
 
     <div class="container-fluid px-4">
         
-        <div class="card mb-4 bg-light">
-            <div class="card-body py-3">
-                <form class="row g-3 align-items-center">
-                    <div class="col-auto">
-                        <input type="text" name="q" class="form-control" placeholder="Cari veya Açıklama Ara..." value="<?php echo $_GET['q'] ?? ''; ?>">
-                    </div>
-                    <div class="col-auto">
-                        <select name="dept_id" class="form-select">
-                            <option value="">Tüm Bölümler</option>
-                            <?php foreach($depts as $d): ?>
-                                <option value="<?php echo $d['id']; ?>" <?php echo (isset($_GET['dept_id']) && $_GET['dept_id'] == $d['id']) ? 'selected' : ''; ?>>
-                                    <?php echo $d['name']; ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="col-auto">
-                        <button type="submit" class="btn btn-primary"><i class="fa fa-filter"></i> Filtrele</button>
-                    </div>
-                </form>
-            </div>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 class="mb-0">Ödeme Listesi</h2>
+            <a href="transaction-add.php" class="btn btn-success"><i class="fa fa-plus"></i> Yeni İşlem Ekle</a>
         </div>
 
         <div class="card shadow">
-            <div class="card-header bg-dark text-white d-flex justify-content-between">
-                <h5 class="mb-0">Ödeme Listesi</h5>
-                <span>Toplam Kayıt: <?php echo count($orders); ?></span>
-            </div>
-            <div class="card-body p-0">
+            <div class="card-body p-2">
                 <div class="table-responsive">
-                    <table class="table table-hover table-striped table-bordered table-sm mb-0">
-                        <thead class="table-secondary text-center">
+                    <table id="paymentTable" class="table table-striped table-bordered table-hover table-sm w-100">
+                        <thead class="table-light">
                             <tr>
-                                <th width="120">İşlemler</th> <th>Tarih</th>
+                                <th width="90" class="text-center">İşlemler</th>
+                                <th width="30">ID</th>
                                 <th>Bölüm</th>
+                                <th>Tarih</th>
                                 <th>Belge</th>
-                                <th>Cari / Açıklama</th>
-                                <th>Proje</th>
-                                <th>Orijinal Tutar</th>
-                                <th>TL Karşılığı</th>
-                                <th width="100">Öde</th>
+                                <th>Cari Kart</th>
+                                <th>Tur Kodu</th>
+                                <th>Fatura No</th>
+                                <th class="text-end">Tutar (TL)</th>
+                                <th class="text-end">Döviz</th>
+                                <th width="40">Düzenle</th>
+                            </tr>
+                            <tr class="filters">
+                                <td></td> 
+                                <td><input type="text" class="filter-input" placeholder="ID"></td>
+                                <td><input type="text" class="filter-input" placeholder="Bölüm"></td>
+                                <td><input type="text" class="filter-input" placeholder="Tarih"></td>
+                                <td></td>
+                                <td><input type="text" class="filter-input" placeholder="Cari Ara..."></td>
+                                <td><input type="text" class="filter-input" placeholder="Tur Kodu"></td>
+                                <td><input type="text" class="filter-input" placeholder="Fatura"></td>
+                                <td></td> 
+                                <td></td> 
+                                <td></td> 
                             </tr>
                         </thead>
-                        <tbody>
-                            <?php foreach($orders as $o): ?>
-                                <tr>
-                                    <td class="text-center">
-                                        <i class="fa fa-check-circle toggle-btn text-approval <?php echo $o['is_approved'] ? 'active' : ''; ?>" 
-                                           onclick="<?php echo $can_approve ? "toggleStatus({$o['id']}, 'is_approved', this)" : "alert('Yetkiniz yok!')"; ?>"
-                                           title="Ödeme Onayı"></i>
-                                        
-                                        <i class="fa fa-exclamation-circle toggle-btn text-priority ms-2 <?php echo $o['is_priority'] ? 'active' : ''; ?>" 
-                                           onclick="toggleStatus(<?php echo $o['id']; ?>, 'is_priority', this)"
-                                           title="Acil / Öncelikli"></i>
-
-                                        <i class="fa fa-search toggle-btn text-control ms-2 <?php echo $o['needs_control'] ? 'active' : ''; ?>" 
-                                           onclick="toggleStatus(<?php echo $o['id']; ?>, 'needs_control', this)"
-                                           title="Kontrol Edilecek"></i>
-                                    </td>
-
-                                    <td class="text-center"><?php echo date('d.m.Y', strtotime($o['date'])); ?></td>
-                                    <td><?php echo guvenli_html($o['dept_name'] ?? '-'); ?></td>
-                                    <td>
-                                        <span class="badge <?php echo $o['doc_type'] == 'invoice_order' ? 'bg-info' : 'bg-secondary'; ?>">
-                                            <?php echo $o['doc_type'] == 'invoice_order' ? 'Fatura E.' : 'Ödeme E.'; ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <strong><?php echo guvenli_html($o['company_name']); ?></strong><br>
-                                        <small class="text-muted"><?php echo guvenli_html($o['description']); ?></small>
-                                    </td>
-                                    <td><?php echo guvenli_html($o['tour_code']); ?></td>
-                                    
-                                    <td class="text-end font-monospace">
-                                        <?php 
-                                            if($o['currency'] != 'TRY') {
-                                                echo number_format($o['original_amount'], 2) . ' ' . $o['currency'];
-                                                echo '<br><small class="text-muted">Kur: '.$o['exchange_rate'].'</small>';
-                                            } else {
-                                                echo '-';
-                                            }
-                                        ?>
-                                    </td>
-                                    <td class="text-end fw-bold font-monospace">
-                                        <?php echo number_format($o['amount'], 2, ',', '.'); ?> ₺
-                                    </td>
-
-                                    <td class="text-center">
-                                        <?php if($o['is_approved']): ?>
-                                            <a href="complete-payment.php?id=<?php echo $o['id']; ?>" class="btn btn-sm btn-success w-100">
-                                                <i class="fa fa-lira-sign"></i> Öde
-                                            </a>
-                                        <?php else: ?>
-                                            <button class="btn btn-sm btn-secondary w-100" disabled>Bekliyor</button>
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
+                        <tbody></tbody>
                     </table>
                 </div>
             </div>
         </div>
     </div>
 
+    <div class="modal fade" id="editModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">İşlem Düzenle</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="editModalBody">
+                    <div class="text-center p-4"><div class="spinner-border text-primary"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
     <script>
-        function toggleStatus(id, field, element) {
-            // Şimdiki durumu al (active class var mı?)
-            var currentStatus = element.classList.contains('active') ? 1 : 0;
-            var newStatus = currentStatus === 1 ? 0 : 1; // Tersi yap
+        $(document).ready(function() {
+            var table = $('#paymentTable').DataTable({
+                "processing": true,
+                "serverSide": true,
+                "ajax": {
+                    "url": "api-payments-list.php",
+                    "type": "POST"
+                },
+                "pageLength": 100,
+                "order": [[ 3, "desc" ]],
+                "columns": [
+                    { "orderable": false, "data": 0 }, // İşlemler (API'den 0. index)
+                    { "data": 1 },
+                    { "data": 2 },
+                    { "data": 3 },
+                    { "data": 4, "orderable": false },
+                    { "data": 5 },
+                    { "data": 6 },
+                    { "data": 7 },
+                    { "data": 8, "className": "text-end" },
+                    { "data": 9, "className": "text-end" },
+                    { "orderable": false, "data": 10 }
+                ],
+                "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" },
+                "orderCellsTop": true
+            });
 
-            // AJAX İsteği
-            var formData = new FormData();
-            formData.append('id', id);
-            formData.append('field', field);
-            formData.append('value', newStatus);
-
-            fetch('ajax_update.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.text())
-            .then(data => {
-                if(data.trim() === 'OK') {
-                    // Görseli güncelle
-                    if(newStatus === 1) {
-                        element.classList.add('active');
-                    } else {
-                        element.classList.remove('active');
-                    }
-                    // Eğer onay butonuysa sayfayı yenile ki "Öde" butonu açılsın
-                    if(field === 'is_approved') {
-                        location.reload(); 
-                    }
-                } else {
-                    alert('Hata: ' + data);
+            // Filtreleme
+            $('#paymentTable thead tr.filters .filter-input').on('keyup change', function(e) {
+                if (e.keyCode == 13 || e.type == 'change') {
+                    var colIndex = $(this).parent().index();
+                    table.column(colIndex).search(this.value).draw();
                 }
             });
+        });
+
+        // --- BUTON TIKLAMA İŞLEMİ ---
+        function toggleStatus(id, type, element) {
+            // Tipi API formatına çevir
+            var action = 'toggle_' + type; // Örn: toggle_is_approved, toggle_priority
+
+            $.post('api-payment-actions.php', { id: id, action: action }, function(response) {
+                if(response.status === 'success') {
+                    // Sayfayı yenilemeden tabloyu güncelle
+                    $('#paymentTable').DataTable().ajax.reload(null, false);
+                    
+                    const Toast = Swal.mixin({
+                        toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true
+                    });
+                    Toast.fire({ icon: 'success', title: 'Güncellendi' });
+                } else {
+                    Swal.fire('Hata', response.message, 'error');
+                }
+            }, 'json');
+        }
+
+        function openEditModal(id) {
+            var modal = new bootstrap.Modal(document.getElementById('editModal'));
+            modal.show();
+            $('#editModalBody').html('<div class="alert alert-info text-center">Düzenleme formu yükleniyor... ID: '+id+'</div>');
         }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
