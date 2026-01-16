@@ -17,17 +17,21 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     
     <style>
         .filter-input { width: 100%; padding: 3px; font-size: 0.8rem; border: 1px solid #ced4da; }
-        .dt-control { border: none; background: transparent; cursor: pointer; display: flex; justify-content: center; align-items: center; }
-        td.details-control { cursor: pointer; text-align: center; }
-        .cursor-pointer { cursor: pointer; }
+        /* Detay butonu stili */
+        .dt-control { 
+            cursor: pointer; 
+            text-align: center; 
+            vertical-align: middle;
+            color: #0d6efd;
+        }
+        .dt-control:hover { color: #0a58ca; }
         
         /* Buton Renkleri */
-        .text-approval.active { color: #198754; }
-        .text-priority.active { color: #dc3545; }
-        .text-control.active { color: #fd7e14; }
+        .text-approval.active { color: #198754; } /* Yeşil */
+        .text-priority.active { color: #dc3545; } /* Kırmızı */
+        .text-control.active { color: #fd7e14; } /* Turuncu */
         
-        /* Toggle Efekti */
-        .toggle-btn { opacity: 0.3; transition: all 0.2s; font-size: 1.2rem; margin: 0 3px; }
+        .toggle-btn { opacity: 0.3; transition: all 0.2s; font-size: 1.2rem; margin: 0 4px; cursor: pointer; }
         .toggle-btn:hover { transform: scale(1.2); opacity: 0.7; }
         .toggle-btn.active { opacity: 1; transform: scale(1.1); }
     </style>
@@ -38,7 +42,17 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <div class="container-fluid px-4">
         
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2 class="mb-0">Finansal Operasyonlar</h2>
+            <div class="d-flex align-items-center">
+                <h2 class="mb-0">Finansal Operasyonlar</h2>
+                
+                <div class="form-check form-switch ms-4 pt-1">
+                    <input class="form-check-input cursor-pointer" type="checkbox" id="filterInvoicePending" style="width: 3em; height: 1.5em;">
+                    <label class="form-check-label fw-bold text-danger ms-2 pt-1" for="filterInvoicePending">
+                        <i class="fa fa-file-invoice"></i> Fatura Bekleyenler
+                    </label>
+                </div>
+            </div>
+
             <a href="transaction-add.php" class="btn btn-success"><i class="fa fa-plus"></i> Yeni Talep Oluştur</a>
         </div>
 
@@ -48,15 +62,31 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                     <table id="paymentTable" class="table table-bordered table-hover table-sm w-100">
                         <thead class="table-light">
                             <tr>
-                                <th width="20"></th> <th width="60">Durum</th> <th width="90">İşlemler</th> <th width="30">ID</th> <th>Bölüm</th> <th>Tarih</th> <th>Belge</th> <th>Cari / Firma</th> <th>Tur Kodu</th> <th>Fatura</th> <th class="text-end">Tutar (TL)</th> <th class="text-end">Döviz</th> <th width="40">Düzenle</th> </tr>
+                                <th width="20"></th> 
+                                <th width="70">Durum</th> 
+                                <th width="90">İşlemler</th> 
+                                <th width="30">ID</th> 
+                                <th>Bölüm</th>
+                                <th>Tarih</th>
+                                <th>Belge</th>
+                                <th>Cari / Firma</th>
+                                <th>Tur Kodu</th>
+                                <th>Fatura</th>
+                                <th class="text-end">Tutar (TL)</th>
+                                <th class="text-end">Döviz</th>
+                                <th width="40">Düzenle</th>
+                            </tr>
                             <tr class="filters">
-                                <td></td> <td></td> <td></td> <td><input type="text" class="filter-input" placeholder="ID"></td>
+                                <td></td> <td></td> <td></td> 
+                                <td><input type="text" class="filter-input" placeholder="ID"></td>
                                 <td><input type="text" class="filter-input" placeholder="Bölüm"></td>
                                 <td><input type="text" class="filter-input" placeholder="Tarih"></td>
-                                <td></td> <td><input type="text" class="filter-input" placeholder="Cari Ara..."></td>
+                                <td></td> 
+                                <td><input type="text" class="filter-input" placeholder="Cari Ara..."></td>
                                 <td><input type="text" class="filter-input" placeholder="Tur Kodu"></td>
                                 <td><input type="text" class="filter-input" placeholder="Fatura"></td>
-                                <td></td> <td></td> <td></td> </tr>
+                                <td></td> <td></td> <td></td> 
+                            </tr>
                         </thead>
                         <tbody></tbody>
                     </table>
@@ -86,22 +116,18 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
-        // ALT TABLO (DETAY) FORMATI
+        // ALT DETAY (ACCORDION) İÇERİĞİ
         function format(d) {
-            // d[3] = ID sütunu (API'deki sıraya göre index)
-            var id = d[3]; 
-            
-            // Container oluştur
+            var id = d[3]; // ID sütunu (3. index)
             var div = $('<div/>')
                 .addClass('p-3 bg-light border rounded m-2')
                 .attr('id', 'details-' + id)
-                .html('<div class="text-center text-muted"><i class="fa fa-spinner fa-spin"></i> Geçmiş ve detaylar yükleniyor...</div>');
+                .html('<div class="text-center text-muted"><i class="fa fa-spinner fa-spin"></i> Yükleniyor...</div>');
 
-            // Ajax ile detayları çek
             $.get('get-child-transactions.php?parent_id=' + id, function(content){
                 div.html(content);
             }).fail(function(){
-                div.html('<div class="alert alert-danger m-0">Veri yüklenirken hata oluştu.</div>');
+                div.html('<div class="alert alert-danger m-0">Veri yüklenemedi.</div>');
             });
 
             return div;
@@ -113,50 +139,62 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 "serverSide": true,
                 "ajax": {
                     "url": "api-payments-list.php",
-                    "type": "POST"
+                    "type": "POST",
+                    // Filtreleme Parametresini API'ye Gönderiyoruz
+                    "data": function(d) {
+                        d.filter_invoice_pending = $('#filterInvoicePending').is(':checked');
+                    }
                 },
                 "pageLength": 50,
                 "lengthMenu": [[50, 100, 250], [50, 100, 250]],
-                "order": [[ 5, "desc" ]], // Tarih (5. sütun)
+                "order": [[ 5, "desc" ]], // Tarihe göre sırala
                 "columns": [
-                    { "className": 'dt-control', "orderable": false, "data": 0, "defaultContent": '' }, // 0: Detay
-                    { "data": 1 }, // 1: Durum
-                    { "data": 2 }, // 2: İşlemler
-                    { "data": 3 }, // 3: ID
-                    { "data": 4 }, // 4: Bölüm
-                    { "data": 5 }, // 5: Tarih
-                    { "data": 6 }, // 6: Belge
-                    { "data": 7 }, // 7: Cari
-                    { "data": 8 }, // 8: Tur
-                    { "data": 9 }, // 9: Fatura
-                    { "data": 10, "className": "text-end" }, // 10: Tutar
-                    { "data": 11, "className": "text-end" }, // 11: Döviz
-                    { "data": 12, "orderable": false } // 12: Edit
+                    { 
+                        "className": 'dt-control', 
+                        "orderable": false, 
+                        "data": 0, 
+                        "defaultContent": '<i class="fa fa-plus-circle fa-lg"></i>' 
+                    },
+                    { "data": 1 }, // Durum
+                    { "data": 2 }, // İşlemler
+                    { "data": 3 }, // ID
+                    { "data": 4 }, // Bölüm
+                    { "data": 5 }, // Tarih
+                    { "data": 6 }, // Belge
+                    { "data": 7 }, // Cari
+                    { "data": 8 }, // Tur
+                    { "data": 9 }, // Fatura
+                    { "data": 10, "className": "text-end" }, // Tutar
+                    { "data": 11, "className": "text-end" }, // Döviz
+                    { "data": 12, "orderable": false } // Edit
                 ],
                 "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" },
                 "orderCellsTop": true
             });
 
-            // ACCORDION (DETAY AÇMA/KAPAMA)
+            // YENİ: Fatura Filtresi Değişince Tabloyu Yenile
+            $('#filterInvoicePending').on('change', function() {
+                table.ajax.reload();
+            });
+
+            // DETAY AÇMA / KAPAMA
             $('#paymentTable tbody').on('click', 'td.dt-control', function () {
                 var tr = $(this).closest('tr');
                 var row = table.row(tr);
                 var icon = $(this).find('i');
 
                 if (row.child.isShown()) {
-                    // Kapat
                     row.child.hide();
                     tr.removeClass('shown');
-                    icon.removeClass('fa-minus').addClass('fa-plus');
+                    icon.removeClass('fa-minus-circle').addClass('fa-plus-circle');
                 } else {
-                    // Aç
                     row.child(format(row.data())).show();
                     tr.addClass('shown');
-                    icon.removeClass('fa-plus').addClass('fa-minus');
+                    icon.removeClass('fa-plus-circle').addClass('fa-minus-circle');
                 }
             });
 
-            // FİLTRELEME
+            // FİLTRELEME (Enter ile çalışır)
             $('#paymentTable thead tr.filters .filter-input').on('keyup change', function(e) {
                 if (e.keyCode == 13 || e.type == 'change') {
                     var colIndex = $(this).parent().index();
@@ -165,41 +203,35 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // --- BUTON TIKLAMA İŞLEMİ (ONAY/ÖNCELİK) ---
+        // İŞLEM BUTONLARI (Onay, Öncelik, Kontrol)
         function toggleStatus(id, type, element) {
-            var action = 'toggle_' + type; 
-            
-            // Butona basıldığını hissettir (Opaklık azalt)
+            var action = 'toggle_' + type;
             $(element).css('opacity', '0.5');
 
             $.post('api-payment-actions.php', { id: id, action: action }, function(response) {
                 if(response.status === 'success') {
-                    // Tabloyu yenile
                     $('#paymentTable').DataTable().ajax.reload(null, false);
-                    
                     const Toast = Swal.mixin({
                         toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true
                     });
                     Toast.fire({ icon: 'success', title: 'Güncellendi' });
                 } else {
                     Swal.fire('Hata', response.message, 'error');
-                    $(element).css('opacity', '1'); // Hata olursa eski haline getir
+                    $(element).css('opacity', '1');
                 }
             }, 'json');
         }
 
-        // --- DÜZENLEME MODALI AÇMA ---
+        // DÜZENLEME MODALI
         function openEditModal(id) {
-            var myModalEl = document.getElementById('editModal');
-            var modal = bootstrap.Modal.getOrCreateInstance(myModalEl);
-            
+            var modal = new bootstrap.Modal(document.getElementById('editModal'));
             modal.show();
             
             $('#editModalBody').html('<div class="text-center p-5"><div class="spinner-border text-primary"></div><p class="mt-2">Form yükleniyor...</p></div>');
             
             $('#editModalBody').load('transaction-edit.php?id=' + id, function(response, status, xhr) {
                 if (status == "error") {
-                    $('#editModalBody').html('<div class="alert alert-danger">Hata: Form yüklenemedi. (' + xhr.status + ') <br>Lütfen "transaction-edit.php" dosyasının oluşturulduğundan emin olun.</div>');
+                    $('#editModalBody').html('<div class="alert alert-danger">Hata: ' + xhr.status + ' ' + xhr.statusText + '</div>');
                 }
             });
         }

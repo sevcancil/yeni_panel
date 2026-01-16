@@ -271,13 +271,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_transaction'])
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 
-    <script>
+<script>
         $(document).ready(function() {
-            // Select2 (Aramalı Dropdown)
-            $('.select2').select2({
-                theme: 'bootstrap-5',
-                placeholder: "Seçiniz...",
-                allowClear: true
+            $('.select2').select2({ theme: 'bootstrap-5', placeholder: "Seçiniz...", allowClear: true });
+            
+            // TARİH KONTROLÜ (Geçmiş Tarih Uyarısı)
+            $('input[name="date"]').on('change', function() {
+                var selectedDate = new Date($(this).val());
+                var today = new Date();
+                today.setHours(0,0,0,0); // Saat farkını sıfırla
+
+                if(selectedDate < today) {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Dikkat!',
+                        text: 'Geçmişe dönük işlem giriyorsunuz. Bu işlem raporlamalarda sapmaya neden olabilir.',
+                        confirmButtonText: 'Anladım, Devam Et'
+                    });
+                }
             });
         });
 
@@ -302,7 +313,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_transaction'])
         }
 
         // 2. KUR
-       // 2. KUR HESAPLAMA (SİZİN SİSTEMİNİZLE ENTEGRE)
         function updateRate() {
             var currency = document.getElementById('currency').value;
             var rateInput = document.getElementById('exchange_rate');
@@ -315,13 +325,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_transaction'])
                 rateInput.readOnly = false;
                 rateInput.placeholder = "Kur getiriliyor...";
                 
-                // Sizin fonksiyonunuzu kullanan API'ye istek atıyoruz
                 $.get('api-get-currency-rate.php?code=' + currency, function(data) {
                     if (data.status === 'success') {
-                        rateInput.value = data.rate; // Veritabanındaki kayıtlı kur gelir
-                        calcTL(); // TL karşılığını hesapla
-                    } else {
-                        console.log("Kur hatası: " + data.message);
+                        rateInput.value = data.rate;
+                        calcTL();
                     }
                 }, 'json');
             }
@@ -334,7 +341,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_transaction'])
             document.getElementById('amount_tl_display').value = tl.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺';
         }
 
-        // 3. CARİ DETAYLARI
+        // 3. CARİ DETAYLARI (GÜNCEL BAKİYE VE AÇIKLAMA EKLENDİ)
         function fetchCustomerDetails() {
             var id = $('#customer_id').val();
             if(!id) return;
@@ -342,62 +349,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_transaction'])
             $('#modal_customer_id').val(id);
 
             $.get('api-get-customer-details.php?id=' + id, function(data) {
+                // A. Bankalar
                 var bankSelect = $('#bank_id');
                 bankSelect.empty().append('<option value="">Seçiniz...</option>');
-                
                 if(data.banks.length > 0) {
-                    $.each(data.banks, function(index, bank) {
-                        bankSelect.append('<option value="'+bank.id+'">'+bank.bank_name+' ('+bank.currency+') - '+bank.iban+'</option>');
+                    $.each(data.banks, function(i, bank) {
+                        bankSelect.append('<option value="'+bank.id+'">'+bank.bank_name+' - '+bank.iban+'</option>');
                     });
-                } else {
-                    bankSelect.append('<option value="">Kayıtlı banka yok</option>');
                 }
 
-                var historyHtml = '';
+                // B. Bakiye ve Geçmiş (YENİ KISIM)
+                var infoHtml = '';
+                
+                // Bakiye Gösterimi
+                var balanceColor = data.balance < 0 ? 'text-danger' : 'text-success';
+                var balanceText = parseFloat(data.balance).toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' ' + data.currency;
+                
+                infoHtml += '<div class="alert alert-light border shadow-sm p-2 mt-2">';
+                infoHtml += '<h6><i class="fa fa-wallet"></i> Güncel Bakiye: <strong class="'+balanceColor+'">' + balanceText + '</strong></h6>';
+                
+                // Geçmiş İşlemler
                 if(data.history.length > 0) {
-                    historyHtml += '<div class="alert alert-warning p-2 mt-2"><small><strong>⚠️ Bu Carinin Son İşlemleri:</strong><ul class="mb-0 ps-3">';
+                    infoHtml += '<hr class="my-2"><small class="text-muted">Son İşlemler:</small><ul class="mb-0 ps-3 small">';
                     $.each(data.history, function(i, h) {
-                        historyHtml += '<li>' + h.date + ' - ' + h.amount + ' ' + h.currency + ' (' + h.description + ')</li>';
+                        // Açıklamayı da ekledik
+                        var desc = h.description ? ' - ' + h.description : ''; 
+                        var amt = parseFloat(h.original_amount).toLocaleString('tr-TR', {minimumFractionDigits: 2});
+                        infoHtml += '<li>' + h.date + ': <strong>' + amt + ' ' + h.currency + '</strong>' + desc + '</li>';
                     });
-                    historyHtml += '</ul></small></div>';
+                    infoHtml += '</ul>';
+                } else {
+                    infoHtml += '<small class="text-muted">Henüz işlem kaydı yok.</small>';
                 }
-                $('#recent_transactions').html(historyHtml);
+                infoHtml += '</div>';
+                
+                $('#recent_transactions').html(infoHtml);
+
             }, 'json');
         }
 
         // 4. BANKA EKLEME
-        function openBankModal() {
+        function openBankModal() { /* ... (Değişiklik Yok) ... */ 
             var customerId = $('#customer_id').val();
-            if (!customerId) {
-                alert("Lütfen önce bir Cari Kart seçiniz.");
-                return;
-            }
-            var modal = new bootstrap.Modal(document.getElementById('addBankModal'));
-            modal.show();
+            if (!customerId) { alert("Lütfen önce bir Cari Kart seçiniz."); return; }
+            new bootstrap.Modal(document.getElementById('addBankModal')).show();
         }
 
-        function saveBank() {
+        function saveBank() { /* ... (Değişiklik Yok) ... */ 
             var data = {
                 customer_id: $('#modal_customer_id').val(),
                 bank_name: $('#modal_bank_name').val(),
                 iban: $('#modal_iban').val(),
                 currency: $('#modal_currency').val()
             };
-
             $.post('api-add-bank.php', data, function(response) {
                 if (response.status === 'success') {
-                    var modalEl = document.getElementById('addBankModal');
-                    var modal = bootstrap.Modal.getInstance(modalEl);
-                    modal.hide();
+                    bootstrap.Modal.getInstance(document.getElementById('addBankModal')).hide();
                     fetchCustomerDetails();
                     alert("Banka eklendi!");
-                } else {
-                    alert("Hata: " + response.message);
-                }
+                } else { alert("Hata: " + response.message); }
             }, 'json');
         }
 
-        function toggleInvoiceDate() {
+        function toggleInvoiceDate() { /* ... (Değişiklik Yok) ... */ 
             var checked = document.getElementById('invoice_check').checked;
             var div = document.getElementById('invoice_date_div');
             if(checked) div.classList.remove('d-none');
