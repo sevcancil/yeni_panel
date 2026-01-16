@@ -172,3 +172,27 @@ CREATE TABLE `activity_logs` (
   `created_at` datetime DEFAULT current_timestamp(),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 1. İşlemleri birbirine bağlamak için parent_id
+ALTER TABLE `transactions`
+ADD COLUMN `parent_id` INT(11) NULL DEFAULT NULL AFTER `id`,
+ADD INDEX `idx_parent` (`parent_id`);
+
+-- 2. Fatura ve Ödeme Tarihleri (Ayrı ayrı takip için)
+ALTER TABLE `transactions`
+ADD COLUMN `invoice_date` DATE NULL AFTER `date`, -- Resmi Fatura Tarihi
+ADD COLUMN `actual_payment_date` DATE NULL AFTER `date`; -- Gerçekleşen Ödeme Tarihi
+
+-- 3. Cari Banka Hesapları Tablosu
+CREATE TABLE `customer_banks` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `customer_id` int(11) NOT NULL,
+  `bank_name` varchar(100) NOT NULL, -- Garanti, Ziraat
+  `branch_name` varchar(100) DEFAULT NULL,
+  `account_number` varchar(50) DEFAULT NULL,
+  `iban` varchar(50) NOT NULL,
+  `currency` varchar(3) DEFAULT 'TRY',
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  FOREIGN KEY (`customer_id`) REFERENCES `customers`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

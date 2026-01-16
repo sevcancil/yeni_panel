@@ -16,18 +16,20 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css">
     
     <style>
-        .filter-input { width: 100%; padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px; }
-        table.dataTable thead th { vertical-align: middle; white-space: nowrap; font-size: 0.9rem; }
-        table.dataTable tbody td { vertical-align: middle; font-size: 0.9rem; }
+        .filter-input { width: 100%; padding: 3px; font-size: 0.8rem; border: 1px solid #ced4da; }
+        .dt-control { border: none; background: transparent; cursor: pointer; display: flex; justify-content: center; align-items: center; }
+        td.details-control { cursor: pointer; text-align: center; }
+        .cursor-pointer { cursor: pointer; }
         
-        /* SİZİN CSS KODLARINIZ */
-        .toggle-btn { cursor: pointer; opacity: 0.3; transition: all 0.2s; font-size: 1.2rem; }
-        .toggle-btn:hover { transform: scale(1.2); opacity: 0.6; }
+        /* Buton Renkleri */
+        .text-approval.active { color: #198754; }
+        .text-priority.active { color: #dc3545; }
+        .text-control.active { color: #fd7e14; }
+        
+        /* Toggle Efekti */
+        .toggle-btn { opacity: 0.3; transition: all 0.2s; font-size: 1.2rem; margin: 0 3px; }
+        .toggle-btn:hover { transform: scale(1.2); opacity: 0.7; }
         .toggle-btn.active { opacity: 1; transform: scale(1.1); }
-        
-        .text-approval.active { color: #198754; } /* Yeşil */
-        .text-priority.active { color: #dc3545; } /* Kırmızı */
-        .text-control.active  { color: #fd7e14; } /* Turuncu */
     </style>
 </head>
 <body>
@@ -36,41 +38,25 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <div class="container-fluid px-4">
         
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2 class="mb-0">Ödeme Listesi</h2>
-            <a href="transaction-add.php" class="btn btn-success"><i class="fa fa-plus"></i> Yeni İşlem Ekle</a>
+            <h2 class="mb-0">Finansal Operasyonlar</h2>
+            <a href="transaction-add.php" class="btn btn-success"><i class="fa fa-plus"></i> Yeni Talep Oluştur</a>
         </div>
 
         <div class="card shadow">
             <div class="card-body p-2">
                 <div class="table-responsive">
-                    <table id="paymentTable" class="table table-striped table-bordered table-hover table-sm w-100">
+                    <table id="paymentTable" class="table table-bordered table-hover table-sm w-100">
                         <thead class="table-light">
                             <tr>
-                                <th width="90" class="text-center">İşlemler</th>
-                                <th width="30">ID</th>
-                                <th>Bölüm</th>
-                                <th>Tarih</th>
-                                <th>Belge</th>
-                                <th>Cari Kart</th>
-                                <th>Tur Kodu</th>
-                                <th>Fatura No</th>
-                                <th class="text-end">Tutar (TL)</th>
-                                <th class="text-end">Döviz</th>
-                                <th width="40">Düzenle</th>
-                            </tr>
+                                <th width="20"></th> <th width="60">Durum</th> <th width="90">İşlemler</th> <th width="30">ID</th> <th>Bölüm</th> <th>Tarih</th> <th>Belge</th> <th>Cari / Firma</th> <th>Tur Kodu</th> <th>Fatura</th> <th class="text-end">Tutar (TL)</th> <th class="text-end">Döviz</th> <th width="40">Düzenle</th> </tr>
                             <tr class="filters">
-                                <td></td> 
-                                <td><input type="text" class="filter-input" placeholder="ID"></td>
+                                <td></td> <td></td> <td></td> <td><input type="text" class="filter-input" placeholder="ID"></td>
                                 <td><input type="text" class="filter-input" placeholder="Bölüm"></td>
                                 <td><input type="text" class="filter-input" placeholder="Tarih"></td>
-                                <td></td>
-                                <td><input type="text" class="filter-input" placeholder="Cari Ara..."></td>
+                                <td></td> <td><input type="text" class="filter-input" placeholder="Cari Ara..."></td>
                                 <td><input type="text" class="filter-input" placeholder="Tur Kodu"></td>
                                 <td><input type="text" class="filter-input" placeholder="Fatura"></td>
-                                <td></td> 
-                                <td></td> 
-                                <td></td> 
-                            </tr>
+                                <td></td> <td></td> <td></td> </tr>
                         </thead>
                         <tbody></tbody>
                     </table>
@@ -100,6 +86,27 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
+        // ALT TABLO (DETAY) FORMATI
+        function format(d) {
+            // d[3] = ID sütunu (API'deki sıraya göre index)
+            var id = d[3]; 
+            
+            // Container oluştur
+            var div = $('<div/>')
+                .addClass('p-3 bg-light border rounded m-2')
+                .attr('id', 'details-' + id)
+                .html('<div class="text-center text-muted"><i class="fa fa-spinner fa-spin"></i> Geçmiş ve detaylar yükleniyor...</div>');
+
+            // Ajax ile detayları çek
+            $.get('get-child-transactions.php?parent_id=' + id, function(content){
+                div.html(content);
+            }).fail(function(){
+                div.html('<div class="alert alert-danger m-0">Veri yüklenirken hata oluştu.</div>');
+            });
+
+            return div;
+        }
+
         $(document).ready(function() {
             var table = $('#paymentTable').DataTable({
                 "processing": true,
@@ -108,26 +115,48 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                     "url": "api-payments-list.php",
                     "type": "POST"
                 },
-                "pageLength": 100,
-                "order": [[ 3, "desc" ]],
+                "pageLength": 50,
+                "lengthMenu": [[50, 100, 250], [50, 100, 250]],
+                "order": [[ 5, "desc" ]], // Tarih (5. sütun)
                 "columns": [
-                    { "orderable": false, "data": 0 }, // İşlemler (API'den 0. index)
-                    { "data": 1 },
-                    { "data": 2 },
-                    { "data": 3 },
-                    { "data": 4, "orderable": false },
-                    { "data": 5 },
-                    { "data": 6 },
-                    { "data": 7 },
-                    { "data": 8, "className": "text-end" },
-                    { "data": 9, "className": "text-end" },
-                    { "orderable": false, "data": 10 }
+                    { "className": 'dt-control', "orderable": false, "data": 0, "defaultContent": '' }, // 0: Detay
+                    { "data": 1 }, // 1: Durum
+                    { "data": 2 }, // 2: İşlemler
+                    { "data": 3 }, // 3: ID
+                    { "data": 4 }, // 4: Bölüm
+                    { "data": 5 }, // 5: Tarih
+                    { "data": 6 }, // 6: Belge
+                    { "data": 7 }, // 7: Cari
+                    { "data": 8 }, // 8: Tur
+                    { "data": 9 }, // 9: Fatura
+                    { "data": 10, "className": "text-end" }, // 10: Tutar
+                    { "data": 11, "className": "text-end" }, // 11: Döviz
+                    { "data": 12, "orderable": false } // 12: Edit
                 ],
                 "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" },
                 "orderCellsTop": true
             });
 
-            // Filtreleme
+            // ACCORDION (DETAY AÇMA/KAPAMA)
+            $('#paymentTable tbody').on('click', 'td.dt-control', function () {
+                var tr = $(this).closest('tr');
+                var row = table.row(tr);
+                var icon = $(this).find('i');
+
+                if (row.child.isShown()) {
+                    // Kapat
+                    row.child.hide();
+                    tr.removeClass('shown');
+                    icon.removeClass('fa-minus').addClass('fa-plus');
+                } else {
+                    // Aç
+                    row.child(format(row.data())).show();
+                    tr.addClass('shown');
+                    icon.removeClass('fa-plus').addClass('fa-minus');
+                }
+            });
+
+            // FİLTRELEME
             $('#paymentTable thead tr.filters .filter-input').on('keyup change', function(e) {
                 if (e.keyCode == 13 || e.type == 'change') {
                     var colIndex = $(this).parent().index();
@@ -136,14 +165,16 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // --- BUTON TIKLAMA İŞLEMİ ---
+        // --- BUTON TIKLAMA İŞLEMİ (ONAY/ÖNCELİK) ---
         function toggleStatus(id, type, element) {
-            // Tipi API formatına çevir
-            var action = 'toggle_' + type; // Örn: toggle_is_approved, toggle_priority
+            var action = 'toggle_' + type; 
+            
+            // Butona basıldığını hissettir (Opaklık azalt)
+            $(element).css('opacity', '0.5');
 
             $.post('api-payment-actions.php', { id: id, action: action }, function(response) {
                 if(response.status === 'success') {
-                    // Sayfayı yenilemeden tabloyu güncelle
+                    // Tabloyu yenile
                     $('#paymentTable').DataTable().ajax.reload(null, false);
                     
                     const Toast = Swal.mixin({
@@ -152,14 +183,25 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                     Toast.fire({ icon: 'success', title: 'Güncellendi' });
                 } else {
                     Swal.fire('Hata', response.message, 'error');
+                    $(element).css('opacity', '1'); // Hata olursa eski haline getir
                 }
             }, 'json');
         }
 
+        // --- DÜZENLEME MODALI AÇMA ---
         function openEditModal(id) {
-            var modal = new bootstrap.Modal(document.getElementById('editModal'));
+            var myModalEl = document.getElementById('editModal');
+            var modal = bootstrap.Modal.getOrCreateInstance(myModalEl);
+            
             modal.show();
-            $('#editModalBody').html('<div class="alert alert-info text-center">Düzenleme formu yükleniyor... ID: '+id+'</div>');
+            
+            $('#editModalBody').html('<div class="text-center p-5"><div class="spinner-border text-primary"></div><p class="mt-2">Form yükleniyor...</p></div>');
+            
+            $('#editModalBody').load('transaction-edit.php?id=' + id, function(response, status, xhr) {
+                if (status == "error") {
+                    $('#editModalBody').html('<div class="alert alert-danger">Hata: Form yüklenemedi. (' + xhr.status + ') <br>Lütfen "transaction-edit.php" dosyasının oluşturulduğundan emin olun.</div>');
+                }
+            });
         }
     </script>
 </body>
