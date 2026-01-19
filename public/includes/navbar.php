@@ -176,7 +176,7 @@ if (isset($pdo)) {
             </li>
 
             <li>
-                <a href="payment-orders.php?status=unpaid" class="nav-link" title="Fatura Bekleyen">
+                <a href="pending-invoices.php" class="nav-link" title="Fatura Bekleyen">
                     <i class="fa fa-hourglass-half"></i> <span>Fatura Bekleyen</span>
                 </a>
             </li>

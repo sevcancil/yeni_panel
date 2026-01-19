@@ -1,4 +1,5 @@
 <?php
+// public/payment-orders.php
 session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
@@ -9,7 +10,7 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Ödeme Listesi</title>
+    <title>Finansal Operasyonlar</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -17,23 +18,29 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     
     <style>
         .filter-input { width: 100%; padding: 3px; font-size: 0.8rem; border: 1px solid #ced4da; }
-        /* Detay butonu stili */
+        
         .dt-control { 
-            cursor: pointer; 
-            text-align: center; 
-            vertical-align: middle;
-            color: #0d6efd;
+            cursor: pointer; text-align: center; vertical-align: middle; color: #0d6efd;
         }
         .dt-control:hover { color: #0a58ca; }
         
-        /* Buton Renkleri */
+        /* Renkler */
         .text-approval.active { color: #198754; } /* Yeşil */
         .text-priority.active { color: #dc3545; } /* Kırmızı */
         .text-control.active { color: #fd7e14; } /* Turuncu */
         
-        .toggle-btn { opacity: 0.3; transition: all 0.2s; font-size: 1.2rem; margin: 0 4px; cursor: pointer; }
+        /* ADMIN İÇİN (TIKLANABİLİR) */
+        .toggle-btn { 
+            opacity: 0.3; transition: all 0.2s; font-size: 1.2rem; margin: 0 4px; cursor: pointer; 
+        }
         .toggle-btn:hover { transform: scale(1.2); opacity: 0.7; }
         .toggle-btn.active { opacity: 1; transform: scale(1.1); }
+
+        /* PERSONEL İÇİN (TIKLANAMAZ) - YENİ EKLENDİ */
+        .disabled-btn {
+            opacity: 0.3; font-size: 1.2rem; margin: 0 4px; cursor: not-allowed;
+        }
+        .disabled-btn.active { opacity: 1; } /* Aktifse net görünsün ama tıklanmasın */
     </style>
 </head>
 <body>
@@ -116,20 +123,12 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
-        // ALT DETAY (ACCORDION) İÇERİĞİ
         function format(d) {
-            var id = d[3]; // ID sütunu (3. index)
-            var div = $('<div/>')
-                .addClass('p-3 bg-light border rounded m-2')
-                .attr('id', 'details-' + id)
+            var id = d[3];
+            var div = $('<div/>').addClass('p-3 bg-light border rounded m-2').attr('id', 'details-' + id)
                 .html('<div class="text-center text-muted"><i class="fa fa-spinner fa-spin"></i> Yükleniyor...</div>');
-
-            $.get('get-child-transactions.php?parent_id=' + id, function(content){
-                div.html(content);
-            }).fail(function(){
-                div.html('<div class="alert alert-danger m-0">Veri yüklenemedi.</div>');
-            });
-
+            $.get('get-child-transactions.php?parent_id=' + id, function(content){ div.html(content); })
+             .fail(function(){ div.html('<div class="alert alert-danger m-0">Veri yüklenemedi.</div>'); });
             return div;
         }
 
@@ -140,61 +139,36 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 "ajax": {
                     "url": "api-payments-list.php",
                     "type": "POST",
-                    // Filtreleme Parametresini API'ye Gönderiyoruz
                     "data": function(d) {
                         d.filter_invoice_pending = $('#filterInvoicePending').is(':checked');
                     }
                 },
                 "pageLength": 50,
                 "lengthMenu": [[50, 100, 250], [50, 100, 250]],
-                "order": [[ 5, "desc" ]], // Tarihe göre sırala
+                "order": [[ 5, "desc" ]],
                 "columns": [
-                    { 
-                        "className": 'dt-control', 
-                        "orderable": false, 
-                        "data": 0, 
-                        "defaultContent": '<i class="fa fa-plus-circle fa-lg"></i>' 
-                    },
-                    { "data": 1 }, // Durum
-                    { "data": 2 }, // İşlemler
-                    { "data": 3 }, // ID
-                    { "data": 4 }, // Bölüm
-                    { "data": 5 }, // Tarih
-                    { "data": 6 }, // Belge
-                    { "data": 7 }, // Cari
-                    { "data": 8 }, // Tur
-                    { "data": 9 }, // Fatura
-                    { "data": 10, "className": "text-end" }, // Tutar
-                    { "data": 11, "className": "text-end" }, // Döviz
-                    { "data": 12, "orderable": false } // Edit
+                    { "className": 'dt-control', "orderable": false, "data": 0, "defaultContent": '<i class="fa fa-plus-circle fa-lg"></i>' },
+                    { "data": 1 }, { "data": 2 }, { "data": 3 }, { "data": 4 }, { "data": 5 },
+                    { "data": 6 }, { "data": 7 }, { "data": 8 }, { "data": 9 },
+                    { "data": 10, "className": "text-end" }, { "data": 11, "className": "text-end" }, { "data": 12, "orderable": false }
                 ],
                 "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" },
                 "orderCellsTop": true
             });
 
-            // YENİ: Fatura Filtresi Değişince Tabloyu Yenile
-            $('#filterInvoicePending').on('change', function() {
-                table.ajax.reload();
-            });
+            $('#filterInvoicePending').on('change', function() { table.ajax.reload(); });
 
-            // DETAY AÇMA / KAPAMA
             $('#paymentTable tbody').on('click', 'td.dt-control', function () {
                 var tr = $(this).closest('tr');
                 var row = table.row(tr);
                 var icon = $(this).find('i');
-
                 if (row.child.isShown()) {
-                    row.child.hide();
-                    tr.removeClass('shown');
-                    icon.removeClass('fa-minus-circle').addClass('fa-plus-circle');
+                    row.child.hide(); tr.removeClass('shown'); icon.removeClass('fa-minus-circle').addClass('fa-plus-circle');
                 } else {
-                    row.child(format(row.data())).show();
-                    tr.addClass('shown');
-                    icon.removeClass('fa-plus-circle').addClass('fa-minus-circle');
+                    row.child(format(row.data())).show(); tr.addClass('shown'); icon.removeClass('fa-plus-circle').addClass('fa-minus-circle');
                 }
             });
 
-            // FİLTRELEME (Enter ile çalışır)
             $('#paymentTable thead tr.filters .filter-input').on('keyup change', function(e) {
                 if (e.keyCode == 13 || e.type == 'change') {
                     var colIndex = $(this).parent().index();
@@ -203,17 +177,13 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // İŞLEM BUTONLARI (Onay, Öncelik, Kontrol)
         function toggleStatus(id, type, element) {
             var action = 'toggle_' + type;
             $(element).css('opacity', '0.5');
-
             $.post('api-payment-actions.php', { id: id, action: action }, function(response) {
                 if(response.status === 'success') {
                     $('#paymentTable').DataTable().ajax.reload(null, false);
-                    const Toast = Swal.mixin({
-                        toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true
-                    });
+                    const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true });
                     Toast.fire({ icon: 'success', title: 'Güncellendi' });
                 } else {
                     Swal.fire('Hata', response.message, 'error');
@@ -222,18 +192,10 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             }, 'json');
         }
 
-        // DÜZENLEME MODALI
         function openEditModal(id) {
             var modal = new bootstrap.Modal(document.getElementById('editModal'));
             modal.show();
-            
-            $('#editModalBody').html('<div class="text-center p-5"><div class="spinner-border text-primary"></div><p class="mt-2">Form yükleniyor...</p></div>');
-            
-            $('#editModalBody').load('transaction-edit.php?id=' + id, function(response, status, xhr) {
-                if (status == "error") {
-                    $('#editModalBody').html('<div class="alert alert-danger">Hata: ' + xhr.status + ' ' + xhr.statusText + '</div>');
-                }
-            });
+            $('#editModalBody').load('transaction-edit.php?id=' + id);
         }
     </script>
 </body>
