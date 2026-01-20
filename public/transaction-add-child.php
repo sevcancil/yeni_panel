@@ -13,7 +13,7 @@ $stmt = $pdo->prepare("SELECT * FROM transactions WHERE id = ?");
 $stmt->execute([$parent_id]);
 $parent = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if (!$parent) die('<div class="alert alert-danger">Ana işlem bulunamadı.</div>');
+if (!$parent) die('<div class="alert alert-danger m-4">Ana işlem bulunamadı.</div>');
 
 // 2. BAKİYE HESAPLA
 $stmt = $pdo->prepare("SELECT SUM(amount) FROM transactions WHERE parent_id = ?");
@@ -21,27 +21,28 @@ $stmt->execute([$parent_id]);
 $total_paid = (float)$stmt->fetchColumn();
 $remaining = $parent['amount'] - $total_paid;
 
-if ($remaining <= 0) {
+if ($remaining <= 0.01) {
     die('<div class="alert alert-success m-4">Bu işlemin bakiyesi tamamen kapanmıştır.<br><a href="payment-orders.php" class="btn btn-primary mt-2">Listeye Dön</a></div>');
 }
 
-// 3. SEÇENEKLER
+// 3. SEÇENEKLERİ HAZIRLA
 $doc_options = [];
-$coll_channels = [];
+$coll_channels = []; 
 $show_channel_select = false;
 
 if ($parent['type'] == 'credit') {
-    // TAHSİLAT (Gelir)
+    // --- TAHSİLAT (GELİR) İSE ---
     $doc_options = ['Faturaları', 'Dekont', 'Slip/Pos', 'Tahsilat Makbuzu', 'MM', 'Müşteri Çeki', 'Diğer'];
     $coll_channels = $pdo->query("SELECT * FROM collection_channels ORDER BY title ASC")->fetchAll(PDO::FETCH_ASSOC);
     $show_channel_select = true;
 } else {
-    // ÖDEME (Gider)
+    // --- ÖDEME (GİDER) İSE ---
     $doc_options = ['Faturamız', 'Dekont', 'Mail Order', 'Slip/Pos', 'Tediye Makbuzu', 'MM', 'Çek STH', 'Diğer'];
     $show_channel_select = false;
 }
 
 // --- KAYIT İŞLEMİ ---
+$error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $pdo->beginTransaction();
@@ -50,10 +51,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $amount = (float)$_POST['amount'];
         $description = temizle($_POST['description']);
         $document_type = $_POST['document_type'];
+        
+        // Tahsilat Kanalı
         $collection_channel_id = !empty($_POST['collection_channel_id']) ? (int)$_POST['collection_channel_id'] : null;
 
+        // Tür Belirleme: Ana işlem Borç(Gider) ise alt işlem Ödeme Çıkışı olur.
         $child_type = ($parent['type'] == 'debt') ? 'payment_out' : 'payment_in'; 
         
+        // DOSYA YÜKLEME
         $file_path = null;
         if (isset($_FILES['document']) && $_FILES['document']['error'] == 0) {
             $allowed = ['jpg', 'jpeg', 'png', 'pdf'];
@@ -69,27 +74,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // 1. KAYIT (ALT İŞLEM)
+        // Created_by eklemeyi unutmayalım
+        $created_by = $_SESSION['user_id'];
+
         $sql = "INSERT INTO transactions (
                     parent_id, type, date, amount, description, 
                     customer_id, tour_code_id, department_id,
-                    doc_type, payment_status, file_path, document_type, collection_channel_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'payment_order', 'paid', ?, ?, ?)";
+                    doc_type, payment_status, file_path, document_type, collection_channel_id,
+                    created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'payment_order', 'paid', ?, ?, ?, ?)";
         
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
-            $parent_id, $child_type, $date, $amount, $description, 
-            $parent['customer_id'], $parent['tour_code_id'], $parent['department_id'],
-            $file_path, $document_type, $collection_channel_id
+            $parent_id, 
+            $child_type, 
+            $date, 
+            $amount, 
+            $description, 
+            $parent['customer_id'], 
+            $parent['tour_code_id'], 
+            $parent['department_id'],
+            $file_path, 
+            $document_type, 
+            $collection_channel_id,
+            $created_by
         ]);
         
+        // 2. DURUM GÜNCELLEME (ANA İŞLEM)
         $new_total_paid = $total_paid + $amount;
         if ($new_total_paid >= ($parent['amount'] - 0.05)) {
             $pdo->prepare("UPDATE transactions SET payment_status = 'paid', actual_payment_date = ? WHERE id = ?")->execute([$date, $parent_id]);
         }
 
-        $log_desc = "$document_type ile $amount TL işlem girildi.";
-        if($collection_channel_id) $log_desc .= " (Tahsilat Kanalı ID: $collection_channel_id)";
-        log_action($pdo, 'transaction', $pdo->lastInsertId(), 'create', $log_desc);
+        // 3. LOGLAMA
+        $action_name = ($child_type == 'payment_out') ? 'Ödeme Yapıldı' : 'Tahsilat Alındı';
+        $log_desc = "$action_name: " . number_format($amount, 2) . " TL ($document_type)";
+        
+        if($collection_channel_id) {
+            $stmt_ch = $pdo->prepare("SELECT title FROM collection_channels WHERE id = ?");
+            $stmt_ch->execute([$collection_channel_id]);
+            $ch_name = $stmt_ch->fetchColumn();
+            if($ch_name) $log_desc .= " - Kanal: $ch_name";
+        }
+        
+        log_action($pdo, 'transaction', $parent_id, 'create', $log_desc);
 
         $pdo->commit();
         header("Location: payment-orders.php?msg=success");
@@ -125,30 +154,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         
                         <?php if(empty($parent['invoice_no'])): ?>
                             <?php if($parent['type'] == 'debt'): ?>
-                                <div class="alert alert-danger d-flex align-items-center mb-3 shadow-sm border-danger">
+                                <div class="alert alert-danger d-flex align-items-center mb-3 border-2 border-danger" role="alert">
                                     <i class="fa fa-exclamation-triangle fa-2x me-3"></i>
                                     <div>
                                         <h6 class="alert-heading fw-bold mb-0">Dikkat: Fatura Girişi Yapılmamış!</h6>
-                                        <small>Bu ödeme emrine ait bir fatura numarası girilmemiş. Ödeme yapmadan önce faturanın geldiğinden emin olunuz.</small>
+                                        <small>Bu ödeme emrine ait bir <b>Fatura Numarası</b> sisteme girilmemiş.</small>
                                     </div>
                                 </div>
                             <?php else: ?>
-                                <div class="alert alert-warning d-flex align-items-center mb-3 shadow-sm border-warning">
-                                    <i class="fa fa-clock fa-2x me-3"></i>
+                                <div class="alert alert-warning d-flex align-items-center mb-3 border-2 border-warning" role="alert">
+                                    <i class="fa fa-file-invoice fa-2x me-3"></i>
                                     <div>
-                                        <h6 class="alert-heading fw-bold mb-0">Uyarı: Fatura Kesilmedi!</h6>
-                                        <small>Bu tahsilat işlemi için henüz bir fatura kaydı oluşturulmamış.</small>
+                                        <h6 class="alert-heading fw-bold mb-0">Uyarı: Fatura Oluşturulmadı!</h6>
+                                        <small>Bu tahsilat için henüz sistemde bir fatura kaydı veya numarası yok.</small>
                                     </div>
                                 </div>
                             <?php endif; ?>
                         <?php endif; ?>
+
                         <div class="alert alert-light border shadow-sm mb-4">
                             <div class="d-flex justify-content-between text-danger fw-bold fs-5">
                                 <span>Kalan Bakiye:</span> <span><?php echo number_format($remaining, 2); ?> ₺</span>
                             </div>
                         </div>
 
-                        <?php if(isset($error)): ?>
+                        <?php if(!empty($error)): ?>
                             <div class="alert alert-danger"><?php echo $error; ?></div>
                         <?php endif; ?>
 

@@ -11,8 +11,7 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// --- GÜVENLİK KONTROLÜ (YENİ) ---
-// Sadece Adminler işlem yapabilir
+// --- GÜVENLİK KONTROLÜ ---
 if ($_SESSION['role'] !== 'admin') {
     echo json_encode(['status' => 'error', 'message' => 'Bu işlem için yetkiniz bulunmuyor.']);
     exit;
@@ -28,7 +27,10 @@ try {
         $current = $stmt->fetchColumn();
         $new = $current ? 0 : 1;
         $pdo->prepare("UPDATE transactions SET is_approved = ? WHERE id = ?")->execute([$new, $id]);
-        log_action($pdo, 'transaction', $id, 'update', $new ? "Ödeme onaylandı." : "Ödeme onayı geri alındı.");
+        
+        // Log Ekle
+        log_action($pdo, 'transaction', $id, 'update', $new ? "Ödeme Onaylandı" : "Ödeme Onayı Geri Alındı");
+        
         echo json_encode(['status' => 'success']);
     }
     elseif ($action == 'toggle_priority') {
@@ -37,6 +39,10 @@ try {
         $current = $stmt->fetchColumn();
         $new = $current ? 0 : 1;
         $pdo->prepare("UPDATE transactions SET is_priority = ? WHERE id = ?")->execute([$new, $id]);
+        
+        // Log Ekle
+        log_action($pdo, 'transaction', $id, 'update', $new ? "Öncelikli Olarak İşaretlendi" : "Öncelik İşareti Kaldırıldı");
+        
         echo json_encode(['status' => 'success']);
     }
     elseif ($action == 'toggle_check') {
@@ -45,6 +51,10 @@ try {
         $current = $stmt->fetchColumn();
         $new = $current ? 0 : 1;
         $pdo->prepare("UPDATE transactions SET needs_control = ? WHERE id = ?")->execute([$new, $id]);
+        
+        // Log Ekle
+        log_action($pdo, 'transaction', $id, 'update', $new ? "Kontrol Edilecek Olarak İşaretlendi" : "Kontrol İşareti Kaldırıldı");
+        
         echo json_encode(['status' => 'success']);
     }
     else {

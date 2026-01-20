@@ -1,4 +1,5 @@
 <?php
+// public/customers.php
 session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
@@ -53,7 +54,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     // GEÇİCİ KAYIT MANTIĞI
     if ($is_temporary) {
-        // Eğer geçici ise ve TC/Vergi boşsa, sistem otomatik G-RANDOM kod üretir.
         $random_suffix = time() . rand(100,999);
         
         if ($type == 'real' && empty($tc) && empty($passport)) {
@@ -86,8 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $params_check = [];
     $check_active = false;
 
-    // Geçici kodları (G- ile başlayan) mükerrerlik kontrolüne sokma, çünkü random ürettik.
-    // Sadece gerçek verileri kontrol et.
+    // Geçici kodları (G- ile başlayan) mükerrerlik kontrolüne sokma
     if ($type == 'legal' && !empty($tax_number) && strpos($tax_number, 'G-VN-') === false) {
         $sql_check .= "tax_number = ?";
         $params_check[] = $tax_number;
@@ -135,18 +134,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             // YENİ EKLEME
             $current_balance = $op_balance; 
+            
+            // --- DÜZELTME: Oluşturan Kişiyi (created_by) Al ---
+            $created_by = $_SESSION['user_id'];
+
+            // INSERT Sorgusuna `created_by` EKLENDİ
             $sql = "INSERT INTO customers (
                 customer_type, customer_code, company_name, contact_name, 
                 tc_number, passport_number, tax_office, tax_number, 
                 email, phone, fax, country, city, address, 
-                opening_balance, opening_balance_currency, opening_balance_date, current_balance
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                opening_balance, opening_balance_currency, opening_balance_date, current_balance,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             
             $stmt = $pdo->prepare($sql);
             $stmt->execute([
                 $type, $code, $title, $contact, $tc, $passport, $tax_office, $tax_number,
                 $email, $phone, $fax, $country, $city, $address,
-                $op_balance, $op_curr, $op_date, $current_balance
+                $op_balance, $op_curr, $op_date, $current_balance,
+                $created_by // <-- ARTIK KAYIT EDİLİYOR
             ]);
             
             $last_id = $pdo->lastInsertId();
@@ -213,7 +219,6 @@ $customers = $pdo->query($sql)->fetchAll();
                                     
                                     <?php 
                                         // EKSİK BİLGİ KONTROLÜ
-                                        // Eğer TC veya Vergi No "G-" (Geçici) ile başlıyorsa eksiktir.
                                         $is_missing = false;
                                         if (strpos($c['tc_number'], 'G-TC-') !== false || strpos($c['tax_number'], 'G-VN-') !== false) {
                                             $is_missing = true;

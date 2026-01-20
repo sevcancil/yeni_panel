@@ -1,12 +1,25 @@
 <?php
-// --- NAVBAR İÇİNDE SQL SORGUSU ---
-// Bu dosya her sayfada include edildiği için, eksik bilgi sayısını burada hesaplayabiliriz.
-// Eğer veritabanı bağlantısı ($pdo) yoksa hata vermesin diye kontrol ediyoruz.
-if (isset($pdo)) {
-    $sql_missing = "SELECT COUNT(*) FROM customers WHERE tc_number LIKE 'G-TC-%' OR tax_number LIKE 'G-VN-%'";
-    $missing_count = $pdo->query($sql_missing)->fetchColumn();
-} else {
-    $missing_count = 0;
+// public/includes/navbar.php
+
+// Oturum kontrolü
+if (session_status() === PHP_SESSION_NONE) session_start();
+
+// Uyarı Sayısını Hesapla
+$alert_count = 0;
+
+// alerts.php dosyasının tam yolunu bulalım
+// Bu dosya public/includes/ içinde olduğu için 2 seviye yukarı çıkıp app/functions'a iniyoruz.
+$alerts_file = __DIR__ . '/../../app/functions/alerts.php';
+
+if (file_exists($alerts_file)) {
+    require_once $alerts_file;
+    if (isset($pdo) && isset($_SESSION['user_id'])) {
+        // Fonksiyonun varlığını kontrol et (Hata vermesin)
+        if (function_exists('get_user_alerts')) {
+            $my_alerts = get_user_alerts($pdo, $_SESSION['user_id'], ($_SESSION['role'] === 'admin'));
+            $alert_count = count($my_alerts);
+        }
+    }
 }
 ?>
 <style>
@@ -78,29 +91,43 @@ if (isset($pdo)) {
     .nav-link:hover, .nav-link.active { background-color: rgba(255,255,255, 0.1); color: #fff; }
     .nav-link i { min-width: 30px; text-align: center; margin-right: 10px; }
     
-    /* Notification Badge */
+    .sidebar-heading { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #adb5bd; margin-top: 20px; margin-bottom: 10px; padding-left: 15px; white-space: nowrap; font-weight: bold; }
+
+    /* KIRMIZI ROZET (Profil İçin) */
+    .badge-profile-alert {
+        background-color: #dc3545;
+        color: white;
+        font-size: 0.7rem;
+        font-weight: bold;
+        padding: 2px 6px;
+        border-radius: 50%;
+        position: absolute;
+        top: 0;
+        right: 0;
+        animation: blink 1.5s infinite;
+        box-shadow: 0 0 5px rgba(220, 53, 69, 0.8);
+    }
+
+    /* NORMAL ROZET (Menü İçin) */
     .badge-notification {
-        margin-left: auto; /* Sağa yasla */
+        margin-left: auto;
         background-color: #ffc107;
         color: #000;
         font-size: 0.75rem;
         font-weight: bold;
         padding: 2px 6px;
         border-radius: 4px;
-        animation: pulse 2s infinite;
     }
 
-    @keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.1); }
-        100% { transform: scale(1); }
+    @keyframes blink {
+        0% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.7; transform: scale(1.1); }
+        100% { opacity: 1; transform: scale(1); }
     }
-
+    
     /* KIRMIZI LINKLER (ADMIN) */
     .nav-link.text-danger { color: #ff6b6b !important; }
     .nav-link.text-danger:hover { background-color: rgba(220, 53, 69, 0.2); color: #fff !important; }
-
-    .sidebar-heading { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #adb5bd; margin-top: 20px; margin-bottom: 10px; padding-left: 15px; white-space: nowrap; font-weight: bold; }
 </style>
 
 <div class="sidebar-overlay" id="sidebarOverlay"></div>
@@ -133,14 +160,11 @@ if (isset($pdo)) {
             <li>
                 <a href="customers.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'customers.php' ? 'active' : ''; ?>" title="Cari Hesaplar">
                     <i class="fa fa-address-card"></i> <span>Cari Kartlar</span>
-                    <?php if(isset($missing_count) && $missing_count > 0): ?>
-                        <span class="badge-notification" title="<?php echo $missing_count; ?> carinin bilgileri eksik!"><?php echo $missing_count; ?></span>
-                    <?php endif; ?>
                 </a>
             </li>
             
             <li>
-                <a href="customers.php" class="nav-link" title="Cari Kart Bakiye">
+                <a href="#" class="nav-link" title="Cari Kart Bakiye">
                     <i class="fa fa-scale-balanced"></i> <span>Cari Kartlar Bakiye</span>
                 </a>
             </li>
@@ -213,14 +237,31 @@ if (isset($pdo)) {
         <hr>
         
         <div class="dropdown">
-            <a href="#" class="d-flex align-items-center text-white text-decoration-none dropdown-toggle" id="dropdownUser1" data-bs-toggle="dropdown" aria-expanded="false">
-                <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px;">
+            <a href="#" class="d-flex align-items-center text-white text-decoration-none dropdown-toggle position-relative" id="dropdownUser1" data-bs-toggle="dropdown" aria-expanded="false">
+                <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-2 position-relative" style="width: 32px; height: 32px;">
                     <i class="fa fa-user"></i>
+                    <?php if($alert_count > 0): ?>
+                        <span class="badge-profile-alert" title="<?php echo $alert_count; ?> eksik bilgi!"><?php echo $alert_count; ?></span>
+                    <?php endif; ?>
                 </div>
                 <strong class="user-name"><?php echo guvenli_html($_SESSION['username']); ?></strong>
             </a>
+            
             <ul class="dropdown-menu dropdown-menu-dark text-small shadow" aria-labelledby="dropdownUser1">
-                <li><a class="dropdown-item" href="logout.php"><i class="fa fa-sign-out-alt me-2"></i> Çıkış Yap</a></li>
+                <li>
+                    <a class="dropdown-item d-flex justify-content-between align-items-center" href="profile.php">
+                        <span><i class="fa fa-user-circle me-2"></i> Profil</span>
+                        <?php if($alert_count > 0): ?>
+                            <span class="badge bg-danger rounded-pill"><?php echo $alert_count; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li><hr class="dropdown-divider"></li>
+                <li>
+                    <a class="dropdown-item" href="logout.php">
+                        <i class="fa fa-sign-out-alt me-2"></i> Çıkış Yap
+                    </a>
+                </li>
             </ul>
         </div>
     </div>
@@ -235,6 +276,7 @@ if (isset($pdo)) {
     </div>
 </nav>
 
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const toggleBtn = document.getElementById('sidebarToggle');
@@ -244,18 +286,54 @@ if (isset($pdo)) {
         
         if (isCollapsed) { body.classList.add('sb-collapsed'); }
 
-        toggleBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            if (window.innerWidth < 992) {
-                body.classList.toggle('sb-mobile-open');
-            } else {
-                body.classList.toggle('sb-collapsed');
-                localStorage.setItem('sidebar-collapsed', body.classList.contains('sb-collapsed'));
-            }
-        });
+        if(toggleBtn) {
+            toggleBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (window.innerWidth < 992) {
+                    body.classList.toggle('sb-mobile-open');
+                } else {
+                    body.classList.toggle('sb-collapsed');
+                    localStorage.setItem('sidebar-collapsed', body.classList.contains('sb-collapsed'));
+                }
+            });
+        }
 
-        overlay.addEventListener('click', function() {
-            body.classList.remove('sb-mobile-open');
-        });
+        if(overlay) {
+            overlay.addEventListener('click', function() {
+                body.classList.remove('sb-mobile-open');
+            });
+        }
+
+        // --- EKSİK BİLGİ POPUP'I ---
+        var missingCount = <?php echo $alert_count; ?>;
+        
+        // Eğer eksik varsa ve şu an profil sayfasında değilsek uyar
+        // href kontrolü ile tam url'de 'profile.php' geçmiyorsa çalıştır
+        if (missingCount > 0 && window.location.href.indexOf('profile.php') === -1) {
+            
+            const Toast = Swal.mixin({
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: true,
+                confirmButtonText: 'İncele',
+                showCancelButton: false,
+                timer: 5000,
+                timerProgressBar: true,
+                didOpen: (toast) => {
+                    toast.addEventListener('mouseenter', Swal.stopTimer)
+                    toast.addEventListener('mouseleave', Swal.resumeTimer)
+                }
+            });
+
+            Toast.fire({
+                icon: 'warning',
+                title: 'Eksik Bilgileriniz Var!',
+                text: missingCount + ' adet kayıtta eksik bilgi tespit edildi.'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    window.location.href = 'profile.php';
+                }
+            });
+        }
     });
 </script>

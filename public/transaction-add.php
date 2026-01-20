@@ -7,13 +7,9 @@ require_once '../app/functions/security.php';
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
 // --- VERİLERİ ÇEK ---
-// 1. Departmanlar
 $departments = $pdo->query("SELECT * FROM departments ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-// 2. Tur Kodları
 $tours = $pdo->query("SELECT * FROM tour_codes WHERE status = 'active' ORDER BY code DESC")->fetchAll(PDO::FETCH_ASSOC);
-// 3. Ödeme Yöntemleri (Gider için)
 $methods = $pdo->query("SELECT * FROM payment_methods ORDER BY title ASC")->fetchAll(PDO::FETCH_ASSOC);
-// 4. Tahsilat Kanalları (Gelir için) - YENİ EKLENDİ
 $coll_channels = $pdo->query("SELECT * FROM collection_channels ORDER BY title ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 $error = '';
@@ -21,7 +17,7 @@ $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Form Verileri
-        $doc_type = $_POST['doc_type']; // payment_order (Gider) veya invoice_order (Gelir)
+        $doc_type = $_POST['doc_type']; 
         $date = $_POST['date'];
         
         $customer_id = !empty($_POST['customer_id']) ? $_POST['customer_id'] : null;
@@ -43,37 +39,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $description = temizle($_POST['description']);
-        $invoice_no = temizle($_POST['invoice_no']);
-        $invoice_date = !empty($_POST['invoice_date']) ? $_POST['invoice_date'] : null;
         $due_date = !empty($_POST['due_date']) ? $_POST['due_date'] : null;
-        $invoice_status = isset($_POST['invoice_check']) ? 'pending' : 'issued';
         
-        // DEĞİŞKEN ALANLAR
+        // --- FATURA DURUM MANTIĞI ---
+        $invoice_no = null;
+        $invoice_date = null;
+        $invoice_status = 'pending';
+
+        if ($doc_type === 'payment_order') {
+            // GİDER
+            $invoice_no = !empty($_POST['invoice_no']) ? temizle($_POST['invoice_no']) : null;
+            $invoice_date = !empty($_POST['invoice_date']) ? $_POST['invoice_date'] : null;
+            $invoice_status = ($invoice_no) ? 'issued' : 'pending';
+        } else {
+            // GELİR
+            if (isset($_POST['issue_invoice_check'])) {
+                $invoice_status = 'to_be_issued'; 
+            } else {
+                $invoice_status = 'waiting_approval';
+            }
+        }
+
+        // --- DOSYA YÜKLEME ---
+        $file_path = null;
+        if (isset($_FILES['invoice_file']) && $_FILES['invoice_file']['error'] == 0) {
+            $allowed = ['jpg', 'jpeg', 'png', 'pdf'];
+            $ext = strtolower(pathinfo($_FILES['invoice_file']['name'], PATHINFO_EXTENSION));
+            if (!in_array($ext, $allowed)) throw new Exception("Geçersiz dosya formatı.");
+            
+            $upload_dir = '../storage/documents/';
+            if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
+            
+            $filename = uniqid() . '.' . $ext;
+            if (move_uploaded_file($_FILES['invoice_file']['tmp_name'], $upload_dir . $filename)) {
+                $file_path = 'documents/' . $filename;
+            }
+        }
+        
         $recipient_bank_id = null;
         $payment_method_id = null;
         $collection_channel_id = null;
 
         if ($doc_type === 'payment_order') {
-            // ÖDEME İSE: Yöntem ve Banka Kaydet
             $recipient_bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
             $payment_method_id = !empty($_POST['payment_method_id']) ? $_POST['payment_method_id'] : null;
         } else {
-            // TAHSİLAT İSE: Tahsilat Kanalı Kaydet
             $collection_channel_id = !empty($_POST['collection_channel_id']) ? $_POST['collection_channel_id'] : null;
         }
 
-        // İşlem Tipi (Borç/Alacak)
         $type = ($doc_type === 'payment_order') ? 'debt' : 'credit';
+        $created_by = $_SESSION['user_id'];
 
-        // KAYIT
-        // Not: Veritabanında collection_channel_id sütunu ekli olmalıdır (Önceki adımda eklemiştik)
         $sql = "INSERT INTO transactions (
                     customer_id, department_id, tour_code_id, type, doc_type, 
                     amount, currency, original_amount, exchange_rate, 
                     date, invoice_date, due_date, invoice_no, description, 
                     payment_status, invoice_status, 
-                    recipient_bank_id, payment_method_id, collection_channel_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?)";
+                    recipient_bank_id, payment_method_id, collection_channel_id,
+                    created_by, file_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?, ?, ?)";
         
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
@@ -81,7 +105,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $amount, $currency, $original_amount, $exchange_rate,
             $date, $invoice_date, $due_date, $invoice_no, $description,
             $invoice_status, 
-            $recipient_bank_id, $payment_method_id, $collection_channel_id
+            $recipient_bank_id, $payment_method_id, $collection_channel_id,
+            $created_by, $file_path
         ]);
 
         $last_id = $pdo->lastInsertId();
@@ -104,11 +129,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" />
-    
     <style>
         body { background-color: #f4f6f9; }
         .form-section { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
         .section-title { font-size: 1.1rem; font-weight: bold; color: #495057; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; margin-bottom: 15px; }
+        
+        /* Bakiye Kartı Stili */
+        .balance-card { border-radius: 10px; padding: 15px; color: white; margin-bottom: 20px; }
+        .bg-gradient-success { background: linear-gradient(45deg, #198754, #20c997); }
+        .bg-gradient-danger { background: linear-gradient(45deg, #dc3545, #ff6b6b); }
     </style>
 </head>
 <body>
@@ -124,9 +153,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="alert alert-danger"><?php echo $error; ?></div>
         <?php endif; ?>
 
-        <form method="POST">
+        <form method="POST" enctype="multipart/form-data">
             <div class="row">
-                
                 <div class="col-md-8">
                     
                     <div class="form-section">
@@ -159,7 +187,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </select>
                                 <button type="button" class="btn btn-outline-primary" onclick="window.open('customers.php', '_blank')"><i class="fa fa-plus"></i></button>
                             </div>
-                            <div id="recent_transactions"></div>
                         </div>
 
                         <div class="row">
@@ -210,14 +237,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
                         </div>
                     </div>
-
                 </div>
 
                 <div class="col-md-4">
-                    
                     <div class="form-section bg-light border-primary border-top border-3">
                         <h6 class="section-title">Finansal Detaylar</h6>
-                        
                         <div id="payment_details_group">
                             <div class="mb-3">
                                 <label class="form-label fw-bold">Ödeme Yöntemi</label>
@@ -228,7 +252,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <?php endforeach; ?>
                                 </select>
                             </div>
-
                             <div class="mb-3">
                                 <label class="form-label">Alıcı Banka Hesabı</label>
                                 <div class="input-group">
@@ -240,7 +263,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <div class="form-text small">Müşterinin banka bilgisi</div>
                             </div>
                         </div>
-
                         <div id="collection_details_group" class="d-none">
                             <div class="mb-3">
                                 <label class="form-label fw-bold text-success">Hedef Tahsilat Kanalı</label>
@@ -253,28 +275,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <div class="form-text small">Paranın girmesini planladığınız hesap.</div>
                             </div>
                         </div>
-
                     </div>
 
                     <div class="form-section">
                         <h6 class="section-title">Fatura & Vade</h6>
                         
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="invoice_check" name="invoice_check" onchange="toggleInvoiceDate()">
-                            <label class="form-check-label text-danger fw-bold" for="invoice_check">Faturası Henüz Kesilmedi</label>
-                        </div>
-
-                        <div id="invoice_date_div">
-                            <div class="mb-2">
-                                <label class="form-label">Fatura No</label>
-                                <input type="text" name="invoice_no" class="form-control">
+                        <div id="payment_invoice_fields">
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Gelen Fatura No</label>
+                                <input type="text" name="invoice_no" class="form-control" placeholder="Varsa giriniz...">
+                                <div class="form-text small">Boş bırakılırsa "Fatura Gelmedi" sayılır.</div>
                             </div>
-                            <div class="mb-2">
+                            <div class="mb-3">
                                 <label class="form-label">Fatura Tarihi</label>
                                 <input type="date" name="invoice_date" class="form-control">
                             </div>
+                            <div class="mb-3">
+                                <label class="form-label">Fatura Görseli/PDF</label>
+                                <input type="file" name="invoice_file" class="form-control" accept=".pdf,.jpg,.png,.jpeg">
+                            </div>
                         </div>
-                        
+
+                        <div id="collection_invoice_fields" class="d-none">
+                            <div class="alert alert-warning">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="issue_invoice_check" name="issue_invoice_check">
+                                    <label class="form-check-label fw-bold" for="issue_invoice_check">
+                                        Fatura Kesilsin
+                                    </label>
+                                </div>
+                                <small class="d-block mt-2">
+                                    <i class="fa fa-info-circle"></i> İşaretlenirse: "Fatura Kesilecek"<br>
+                                    İşaretlenmezse: "Fatura Onayı Bekliyor"
+                                </small>
+                            </div>
+                        </div>
+
                         <div class="mb-2">
                             <label class="form-label">Vade Tarihi</label>
                             <input type="date" name="due_date" class="form-control">
@@ -291,10 +327,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <i class="fa fa-save"></i> İşlemi Kaydet
                         </button>
                     </div>
-
                 </div>
             </div>
         </form>
+
+        <div id="customer-history-section" class="mt-5 d-none">
+            
+            <hr class="border-3 border-dark my-4">
+            
+            <div id="balance-card-container"></div>
+
+            <h4 class="mb-3 text-secondary"><i class="fa fa-history"></i> Seçilen Carinin Son İşlemleri</h4>
+            
+            <div class="card shadow">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover mb-0">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Tarih</th>
+                                    <th>Tür</th>
+                                    <th>Açıklama</th>
+                                    <th>Tur Kodu</th>
+                                    <th class="text-end">Tutar</th>
+                                    <th class="text-end">Bakiye (Anlık)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-table-body">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <div class="modal fade" id="addBankModal" tabindex="-1">
@@ -325,48 +391,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <script>
         $(document).ready(function() {
             $('.select2').select2({ theme: 'bootstrap-5', placeholder: "Seçiniz...", allowClear: true });
-            
-            // Carileri doldur
             var customers = <?php echo json_encode($customers); ?>;
             var customerSelect = $('#customer_id');
             $.each(customers, function(i, c) { customerSelect.append(new Option(c.company_name, c.id)); });
-            
-            toggleFields(); // Başlangıç durumu için
+            toggleFields();
         });
 
-        // TARİH UYARISI
-        $('input[name="date"]').on('change', function() {
-            if(new Date($(this).val()) < new Date().setHours(0,0,0,0)) {
-                Swal.fire({icon: 'warning', title: 'Dikkat', text: 'Geçmişe dönük işlem giriyorsunuz.'});
-            }
-        });
-
-        // GİZLE / GÖSTER MANTIĞI
         function toggleFields() {
             var type = document.getElementById('doc_type').value;
             var hint = document.getElementById('type_hint');
-            
             var payDiv = document.getElementById('payment_details_group');
             var collDiv = document.getElementById('collection_details_group');
+            var payInvDiv = document.getElementById('payment_invoice_fields');
+            var collInvDiv = document.getElementById('collection_invoice_fields');
 
             if (type === 'payment_order') {
-                // ÖDEME EMRİ
                 hint.innerHTML = '<i class="fa fa-arrow-circle-up"></i> Bu işlem KASA ÇIKIŞI (Ödeme) anlamına gelir.';
                 hint.className = 'form-text text-danger fw-bold mt-1';
-                
-                payDiv.classList.remove('d-none'); // Ödeme Yöntemi GÖSTER
-                collDiv.classList.add('d-none');   // Tahsilat Kanalı GİZLE
+                payDiv.classList.remove('d-none'); collDiv.classList.add('d-none');
+                payInvDiv.classList.remove('d-none'); collInvDiv.classList.add('d-none');
             } else {
-                // FATURA / TAHSİLAT
                 hint.innerHTML = '<i class="fa fa-arrow-circle-down"></i> Bu işlem KASA GİRİŞİ (Tahsilat) anlamına gelir.';
                 hint.className = 'form-text text-success fw-bold mt-1';
-                
-                payDiv.classList.add('d-none');    // Ödeme Yöntemi GİZLE
-                collDiv.classList.remove('d-none'); // Tahsilat Kanalı GÖSTER
+                payDiv.classList.add('d-none'); collDiv.classList.remove('d-none');
+                payInvDiv.classList.add('d-none'); collInvDiv.classList.remove('d-none');
             }
         }
 
-        // ... (Diğer fonksiyonlar: updateRate, calcTL, fetchCustomerDetails, openBankModal aynı kalacak) ...
+        // --- GÜNCELLENEN MÜŞTERİ GETİRME VE GEÇMİŞ ---
+        function fetchCustomerDetails() {
+            var id = $('#customer_id').val(); 
+            
+            if(!id) {
+                $('#customer-history-section').addClass('d-none');
+                return;
+            }
+
+            $('#modal_customer_id').val(id);
+            
+            $.get('api-get-customer-details.php?id='+id + '&history=1', function(data){
+                
+                // 1. Bankaları Doldur
+                var bs = $('#bank_id').empty().append('<option value="">Seçiniz...</option>');
+                $.each(data.banks, function(i,b){ bs.append('<option value="'+b.id+'">'+b.bank_name+' - '+b.iban+'</option>'); });
+                
+                // 2. Bakiye Kartını Göster
+                var balClass = data.balance < 0 ? 'bg-gradient-danger' : 'bg-gradient-success';
+                var balText = data.balance < 0 ? 'BORÇLU (Ödeme Yapılmalı)' : 'ALACAKLI (Bizden Alacağı Var / Avans)';
+                if(Math.abs(data.balance) < 0.01) { balClass = 'bg-secondary'; balText = 'BAKİYE SIFIR'; }
+
+                var htmlCard = `
+                    <div class="balance-card ${balClass}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h3 class="mb-0 fw-bold">${parseFloat(Math.abs(data.balance)).toLocaleString('tr-TR', {minimumFractionDigits: 2})} ${data.currency}</h3>
+                                <small>${balText}</small>
+                            </div>
+                            <i class="fa fa-wallet fa-3x opacity-50"></i>
+                        </div>
+                    </div>`;
+                $('#balance-card-container').html(htmlCard);
+
+                // 3. Geçmiş Tablosunu Doldur
+                var tbody = $('#history-table-body').empty();
+                if(data.history && data.history.length > 0) {
+                    $.each(data.history, function(i, h) {
+                        var typeBadge = h.type === 'debt' ? '<span class="badge bg-danger">Borç (Gider)</span>' : '<span class="badge bg-success">Alacak (Gelir)</span>';
+                        var row = `
+                            <tr>
+                                <td>${h.date}</td>
+                                <td>${typeBadge}</td>
+                                <td>${h.description}</td>
+                                <td>${h.tour_code || '-'}</td>
+                                <td class="text-end fw-bold">${parseFloat(h.amount).toLocaleString('tr-TR', {minimumFractionDigits: 2})}</td>
+                                <td class="text-end">${h.balance_after ? parseFloat(h.balance_after).toLocaleString('tr-TR', {minimumFractionDigits: 2}) : '-'}</td>
+                            </tr>
+                        `;
+                        tbody.append(row);
+                    });
+                } else {
+                    tbody.append('<tr><td colspan="6" class="text-center text-muted">Kayıtlı işlem bulunamadı.</td></tr>');
+                }
+
+                // Bölümü Göster
+                $('#customer-history-section').removeClass('d-none');
+
+            }, 'json');
+        }
+
+        // ... Diğer yardımcı fonksiyonlar (updateRate, calcTL, openBankModal, saveBank) aynen kalacak ...
         function updateRate() {
             var currency = document.getElementById('currency').value;
             var rateInput = document.getElementById('exchange_rate');
@@ -378,18 +491,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             var rate = parseFloat(document.getElementById('exchange_rate').value)||1;
             document.getElementById('amount_tl_display').value = (amt*rate).toLocaleString('tr-TR',{minimumFractionDigits:2}) + ' ₺';
         }
-        function fetchCustomerDetails() {
-            var id = $('#customer_id').val(); if(!id) return;
-            $('#modal_customer_id').val(id);
-            $.get('api-get-customer-details.php?id='+id, function(data){
-                var bs = $('#bank_id').empty().append('<option value="">Seçiniz...</option>');
-                $.each(data.banks, function(i,b){ bs.append('<option value="'+b.id+'">'+b.bank_name+' - '+b.iban+'</option>'); });
-                
-                var balCol = data.balance < 0 ? 'text-danger' : 'text-success';
-                var txt = parseFloat(data.balance).toLocaleString('tr-TR',{minimumFractionDigits:2}) + ' ' + data.currency;
-                $('#recent_transactions').html('<div class="alert alert-light border shadow-sm p-2 mt-2"><h6><i class="fa fa-wallet"></i> Bakiye: <strong class="'+balCol+'">'+txt+'</strong></h6></div>');
-            }, 'json');
-        }
         function openBankModal(){ 
             if(!$('#customer_id').val()) { Swal.fire('Uyarı','Cari seçiniz.','warning'); return; }
             new bootstrap.Modal(document.getElementById('addBankModal')).show(); 
@@ -398,10 +499,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $.post('api-add-bank.php', {
                 customer_id:$('#modal_customer_id').val(), bank_name:$('#modal_bank_name').val(), iban:$('#modal_iban').val(), currency:$('#modal_currency').val()
             }, function(r){ if(r.status==='success'){ bootstrap.Modal.getInstance(document.getElementById('addBankModal')).hide(); fetchCustomerDetails(); Swal.fire('Başarılı','Banka eklendi!','success'); } }, 'json');
-        }
-        function toggleInvoiceDate(){
-            var chk = document.getElementById('invoice_check').checked;
-            document.getElementById('invoice_date_div').classList.toggle('d-none', !chk);
         }
     </script>
 </body>
