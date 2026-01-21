@@ -14,71 +14,67 @@ $id = isset($_REQUEST['id']) ? (int)$_REQUEST['id'] : 0;
 
 // --- GÜNCELLEME İŞLEMİ (AJAX POST) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    
-    // 1. TAM PONLAMAYI BAŞLAT (Hataları yutmak için)
     ob_start();
-    
     header('Content-Type: application/json; charset=utf-8');
-    error_reporting(0); // Hataları ekrana basma
+    error_reporting(0); 
     ini_set('display_errors', 0);
 
     try {
-        // ID Kontrolü
         $post_id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
         
-        // 1. ESKİ VERİYİ ÇEK (LOGLAMA İÇİN)
         $stmt_old = $pdo->prepare("SELECT * FROM transactions WHERE id = ?");
         $stmt_old->execute([$post_id]);
         $old_data = $stmt_old->fetch(PDO::FETCH_ASSOC);
         
         if (!$old_data) throw new Exception("İşlem bulunamadı.");
 
-        // 2. FORM VERİLERİNİ AL (Hata vermemesi için ?? null kullanıyoruz)
+        // Verileri Al
         $date = $_POST['date'] ?? date('Y-m-d');
         $customer_id = (int)($_POST['customer_id'] ?? 0);
         $tour_code_id = !empty($_POST['tour_code_id']) ? (int)$_POST['tour_code_id'] : null;
         $department_id = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
-        
-        // Doc Type'ı hidden inputtan alıyoruz (Select disabled olduğu için)
         $doc_type = $_POST['doc_type_hidden'] ?? $old_data['doc_type']; 
         
-        // Tutar ve Döviz
-        $original_amount = (float)($_POST['amount'] ?? 0);
+        // --- TUTAR VE DÖVİZ HESAPLAMA (DÜZELTİLDİ) ---
+        $input_amount = (float)($_POST['amount'] ?? 0); // Kullanıcının girdiği sayı
         $currency = $_POST['currency'] ?? 'TRY';
         $exchange_rate = (float)($_POST['exchange_rate'] ?? 1);
-        $amount_tl = $original_amount * $exchange_rate; 
+        
+        if ($currency === 'TRY') {
+            $amount_tl = $input_amount;      // TL ise direkt tutar
+            $original_amount = 0;            // TRY için orijinal döviz tutarı 0 tutulur (Standart)
+            $exchange_rate = 1.0000;         // TL kuru hep 1
+        } else {
+            $original_amount = $input_amount;// Döviz ise girilen tutar orijinaldir
+            $amount_tl = $input_amount * $exchange_rate; // TL karşılığı hesaplanır
+        }
 
         $description = temizle($_POST['description'] ?? '');
-        
         $recipient_bank_id = !empty($_POST['bank_id']) ? (int)$_POST['bank_id'] : null;
         $payment_channel_id = !empty($_POST['collection_channel_id']) ? (int)$_POST['collection_channel_id'] : null;
-
         $invoice_no = temizle($_POST['invoice_no'] ?? '');
         $invoice_date = !empty($_POST['invoice_date']) ? $_POST['invoice_date'] : null;
         
-        // --- FATURA DURUM MANTIĞI ---
+        // Fatura Durumu
         $invoice_status = $old_data['invoice_status'];
-
         if ($doc_type == 'payment_order') {
-            // GİDER: Fatura No varsa 'issued' (Geldi), yoksa 'pending' (Gelmedi)
             $invoice_status = (!empty($invoice_no)) ? 'issued' : 'pending';
         } else {
-            // GELİR: Checkbox işaretli mi?
             if (isset($_POST['issue_invoice_check'])) {
-                $invoice_status = 'to_be_issued'; // Fatura Kesilecek
+                $invoice_status = 'to_be_issued'; 
             } else {
-                // Eğer daha önce kesilmişse (issued) ve iptal edilmediyse statüyü koru veya onaya çek
-                // Basit mantık: İşaret yoksa "Onay Bekliyor"a döner.
-                $invoice_status = 'waiting_approval'; 
+                // Eğer zaten kesildiyse bozma, değilse onaya çek
+                if ($invoice_status != 'issued') {
+                    $invoice_status = 'waiting_approval';
+                }
             }
         }
 
-        // --- DOSYA YÜKLEME ---
-        $file_path = $old_data['file_path']; // Mevcut dosya
+        // Dosya Yükleme
+        $file_path = $old_data['file_path'];
         if (isset($_FILES['invoice_file']) && $_FILES['invoice_file']['error'] == 0) {
             $allowed = ['jpg', 'jpeg', 'png', 'pdf'];
             $ext = strtolower(pathinfo($_FILES['invoice_file']['name'], PATHINFO_EXTENSION));
-            
             if (!in_array($ext, $allowed)) throw new Exception("Geçersiz dosya formatı.");
             
             $upload_dir = '../storage/documents/';
@@ -90,7 +86,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // 3. GÜNCELLEME SORGUSU
         $sql = "UPDATE transactions SET 
                 date=?, customer_id=?, tour_code_id=?, department_id=?, 
                 amount=?, original_amount=?, currency=?, exchange_rate=?, description=?, 
@@ -107,36 +102,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $post_id
         ]);
 
-        // 4. LOGLAMA
-        $changes = [];
-        if (abs($old_data['original_amount'] - $original_amount) > 0.01) $changes[] = "Tutar değişti";
-        if ($old_data['invoice_status'] != $invoice_status) $changes[] = "Fatura durumu değişti ($invoice_status)";
-        
-        $log_msg = !empty($changes) ? "Güncellendi: " . implode(', ', $changes) : "Güncellendi (Detay değişmedi)";
+        $log_msg = "Kayıt güncellendi.";
         log_action($pdo, 'transaction', $post_id, 'update', $log_msg);
 
-        // Tamponu temizle ve JSON bas
         ob_end_clean();
         echo json_encode(['status' => 'success', 'message' => 'Kayıt başarıyla güncellendi.']);
         exit;
 
     } catch (Exception $e) {
-        // Hata varsa temizle ve hatayı bas
         ob_end_clean();
         echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
         exit;
     }
 }
 
-// --- FORM GÖSTERİMİ (GET İSTEĞİ) ---
-// Buradan sonrası HTML olduğu için tamponlamaya gerek yok
+// --- FORM GÖSTERİMİ ---
 $stmt = $pdo->prepare("SELECT * FROM transactions WHERE id = ?");
 $stmt->execute([$id]);
 $t = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$t) exit('<div class="alert alert-danger">Kayıt bulunamadı.</div>');
 
-// Listeleri Çek
 $customers = $pdo->query("SELECT id, company_name FROM customers ORDER BY company_name")->fetchAll(PDO::FETCH_ASSOC);
 $projects = $pdo->query("SELECT id, code FROM tour_codes WHERE status='active' ORDER BY code DESC")->fetchAll(PDO::FETCH_ASSOC);
 $departments = $pdo->query("SELECT id, name FROM departments ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -151,6 +137,11 @@ if ($t['customer_id']) {
         $customer_banks = $cb_stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch(Exception $e) { $customer_banks = []; }
 }
+
+// --- GÖSTERİLECEK TUTAR BELİRLEME (SORUNUN ÇÖZÜMÜ) ---
+// Eğer TRY ise 'amount' (TL) sütununu göster, Döviz ise 'original_amount' sütununu göster.
+$display_amount = ($t['currency'] == 'TRY') ? $t['amount'] : $t['original_amount'];
+$display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
 ?>
 
 <form id="editForm" enctype="multipart/form-data" onsubmit="return updateTransaction(event)">
@@ -202,11 +193,12 @@ if ($t['customer_id']) {
     <div class="row mb-3 bg-light p-3 rounded border mx-0">
         <div class="col-md-4">
             <label class="form-label small fw-bold">Tutar</label>
-            <input type="number" step="0.01" name="amount" id="edit_amount" class="form-control fw-bold" value="<?php echo $t['original_amount']; ?>" oninput="calcEditTL()" required>
+            <input type="number" step="0.01" name="amount" id="edit_amount" class="form-control fw-bold" 
+                   value="<?php echo (float)$display_amount; ?>" oninput="calcEditTL()" required>
         </div>
         <div class="col-md-3">
             <label class="form-label small fw-bold">Birim</label>
-            <select name="currency" id="edit_currency" class="form-select" onchange="calcEditTL()">
+            <select name="currency" id="edit_currency" class="form-select" onchange="updateEditRate()">
                 <option value="TRY" <?php echo $t['currency'] == 'TRY' ? 'selected' : ''; ?>>TRY</option>
                 <option value="USD" <?php echo $t['currency'] == 'USD' ? 'selected' : ''; ?>>USD</option>
                 <option value="EUR" <?php echo $t['currency'] == 'EUR' ? 'selected' : ''; ?>>EUR</option>
@@ -215,7 +207,8 @@ if ($t['customer_id']) {
         </div>
         <div class="col-md-3">
             <label class="form-label small fw-bold">Kur</label>
-            <input type="number" step="0.0001" name="exchange_rate" id="edit_rate" class="form-control" value="<?php echo $t['exchange_rate']; ?>" oninput="calcEditTL()">
+            <input type="number" step="0.0001" name="exchange_rate" id="edit_rate" class="form-control" 
+                   value="<?php echo (float)$display_rate; ?>" oninput="calcEditTL()">
         </div>
         <div class="col-md-2 d-flex align-items-end justify-content-end">
             <span id="edit_tl_result" class="fw-bold text-success small mb-2"></span>
@@ -226,7 +219,7 @@ if ($t['customer_id']) {
         <?php if($t['doc_type'] == 'payment_order'): ?>
             <div class="col-12">
                 <label class="form-label text-danger">Alıcı Banka</label>
-                <select name="bank_id" class="form-select">
+                <select name="bank_id" id="edit_bank_select" class="form-select">
                     <option value="">Seçiniz...</option>
                     <?php foreach($customer_banks as $cb): ?>
                         <option value="<?php echo $cb['id']; ?>" <?php echo $cb['id'] == $t['recipient_bank_id'] ? 'selected' : ''; ?>>
@@ -258,7 +251,7 @@ if ($t['customer_id']) {
                 <div class="row mb-2">
                     <div class="col-md-6">
                         <label class="form-label">Gelen Fatura No</label>
-                        <input type="text" name="invoice_no" class="form-control" value="<?php echo guvenli_html($t['invoice_no']); ?>" placeholder="Fatura geldiyse giriniz">
+                        <input type="text" name="invoice_no" class="form-control" value="<?php echo guvenli_html($t['invoice_no']); ?>">
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Fatura Tarihi</label>
@@ -276,25 +269,15 @@ if ($t['customer_id']) {
                         </div>
                     <?php endif; ?>
                 </div>
-                <div class="form-text small text-muted">
-                    <i class="fa fa-info-circle"></i> Fatura No girilirse durum <b>"Fatura Geldi"</b>, boşsa <b>"Bekliyor"</b> olur.
-                </div>
             </div>
-
         <?php else: ?>
             <div id="collection_invoice_fields">
                 <div class="alert alert-warning mb-0">
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="issue_invoice_check" name="issue_invoice_check" 
                             <?php echo ($t['invoice_status'] == 'to_be_issued' || $t['invoice_status'] == 'issued') ? 'checked' : ''; ?>>
-                        <label class="form-check-label fw-bold" for="issue_invoice_check">
-                            Fatura Kesilsin
-                        </label>
+                        <label class="form-check-label fw-bold" for="issue_invoice_check">Fatura Kesilsin</label>
                     </div>
-                    <small class="d-block mt-2">
-                        <i class="fa fa-check"></i> İşaretli: <b>"Fatura Kesilecek"</b> (Listede Üstte Görünür)<br>
-                        <i class="fa fa-times"></i> İşaretli Değil: <b>"Fatura Kesme Onayı Bekliyor"</b>
-                    </small>
                 </div>
             </div>
         <?php endif; ?>
@@ -319,15 +302,38 @@ if ($t['customer_id']) {
         document.getElementById('edit_tl_result').innerText = tl.toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' ₺';
     }
 
-    // AJAX İLE FORM GÖNDERİMİ (DOSYA DESTEKLİ)
+    // YENİ: Kuru API'den çekme fonksiyonu
+    function updateEditRate() {
+        var currency = document.getElementById('edit_currency').value;
+        var rateInput = document.getElementById('edit_rate');
+        
+        if (currency === 'TRY') { 
+            rateInput.value = 1.0000; 
+            rateInput.readOnly = true; 
+            calcEditTL(); 
+        } else { 
+            rateInput.readOnly = false; 
+            
+            // Eğer rate zaten 1 ise (yeni dönüşüm) veya kullanıcı isterse api'den çeksin
+            // Otomatik çekmek yerine placeholder koyuyoruz, kullanıcı girmeli veya butona basmalı.
+            // Ama pratiklik için otomatik çekelim:
+            rateInput.placeholder = "Yükleniyor...";
+            
+            $.get('api-get-currency-rate.php?code='+currency, function(d){ 
+                if(d.status === 'success') {
+                    rateInput.value = d.rate; 
+                    calcEditTL();
+                } 
+            }, 'json'); 
+        }
+    }
+
     function updateTransaction(e) {
         e.preventDefault();
-        
         var form = document.getElementById('editForm');
-        var formData = new FormData(form); 
-        
+        var formData = new FormData(form);
         var btn = document.getElementById('btnSave');
-        var originalText = btn.innerHTML;
+        
         btn.disabled = true;
         btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Kaydediliyor...';
 
@@ -343,30 +349,28 @@ if ($t['customer_id']) {
                     var modalEl = document.getElementById('editModal');
                     var modal = bootstrap.Modal.getInstance(modalEl);
                     modal.hide();
-                    
                     if(window.parent && window.parent.jQuery && window.parent.jQuery('#paymentTable').length) {
                         window.parent.jQuery('#paymentTable').DataTable().ajax.reload(null, false); 
                     } else if ($('#paymentTable').length) {
                         $('#paymentTable').DataTable().ajax.reload(null, false);
                     }
-                    
                     Swal.fire({ icon: 'success', title: 'Başarılı', text: 'Kayıt güncellendi.', timer: 1500, showConfirmButton: false });
                 } else {
                     Swal.fire('Hata', res.message, 'error');
                 }
             },
-            error: function(xhr, status, error) {
+            error: function(xhr) {
                 console.error(xhr.responseText);
-                Swal.fire('Hata', 'Sunucu hatası oluştu. Konsolu kontrol edin.', 'error');
+                Swal.fire('Hata', 'Sunucu hatası oluştu.', 'error');
             },
             complete: function() {
                 btn.disabled = false;
-                btn.innerHTML = originalText;
+                btn.innerHTML = 'Değişiklikleri Kaydet';
             }
         });
-        
         return false;
     }
     
+    // Açılışta hesapla
     calcEditTL();
 </script>
