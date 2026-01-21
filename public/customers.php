@@ -44,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $type = $_POST['customer_type']; 
     $title = temizle($_POST['company_name']); 
     $code = temizle($_POST['customer_code']);
-    $is_temporary = isset($_POST['is_temporary']) ? 1 : 0; // GEÇİCİ Mİ?
+    $is_temporary = isset($_POST['is_temporary']) ? 1 : 0; 
     
     // Kimlik Verileri
     $tc = !empty($_POST['tc_number']) ? temizle($_POST['tc_number']) : null;
@@ -55,13 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // GEÇİCİ KAYIT MANTIĞI
     if ($is_temporary) {
         $random_suffix = time() . rand(100,999);
-        
-        if ($type == 'real' && empty($tc) && empty($passport)) {
-            $tc = 'G-TC-' . $random_suffix; 
-        } 
-        if ($type == 'legal' && empty($tax_number)) {
-            $tax_number = 'G-VN-' . $random_suffix;
-        }
+        if ($type == 'real' && empty($tc) && empty($passport)) { $tc = 'G-TC-' . $random_suffix; } 
+        if ($type == 'legal' && empty($tax_number)) { $tax_number = 'G-VN-' . $random_suffix; }
     }
 
     // Diğerleri
@@ -73,9 +68,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $city = temizle($_POST['city']);
     $address = temizle($_POST['address']);
     
-    $op_balance = !empty($_POST['opening_balance']) ? (float)$_POST['opening_balance'] : 0;
-    $op_curr = $_POST['opening_balance_currency'];
-    $op_date = !empty($_POST['opening_balance_date']) ? $_POST['opening_balance_date'] : date('Y-m-d');
+    // YETKİ KONTROLÜ
+    $has_balance_perm = (isset($_SESSION['role']) && ($_SESSION['role'] == 'admin' || $_SESSION['role'] == 'muhasebe'));
+    $op_balance = ($has_balance_perm && !empty($_POST['opening_balance'])) ? (float)$_POST['opening_balance'] : 0;
+    $op_curr = ($has_balance_perm && !empty($_POST['opening_balance_currency'])) ? $_POST['opening_balance_currency'] : 'TRY';
+    $op_date = ($has_balance_perm && !empty($_POST['opening_balance_date'])) ? $_POST['opening_balance_date'] : date('Y-m-d');
 
     // MÜKERRER KONTROLÜ
     $duplicate_error = false;
@@ -86,7 +83,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $params_check = [];
     $check_active = false;
 
-    // Geçici kodları (G- ile başlayan) mükerrerlik kontrolüne sokma
     if ($type == 'legal' && !empty($tax_number) && strpos($tax_number, 'G-VN-') === false) {
         $sql_check .= "tax_number = ?";
         $params_check[] = $tax_number;
@@ -134,11 +130,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             // YENİ EKLEME
             $current_balance = $op_balance; 
-            
-            // --- DÜZELTME: Oluşturan Kişiyi (created_by) Al ---
             $created_by = $_SESSION['user_id'];
 
-            // INSERT Sorgusuna `created_by` EKLENDİ
             $sql = "INSERT INTO customers (
                 customer_type, customer_code, company_name, contact_name, 
                 tc_number, passport_number, tax_office, tax_number, 
@@ -152,7 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $type, $code, $title, $contact, $tc, $passport, $tax_office, $tax_number,
                 $email, $phone, $fax, $country, $city, $address,
                 $op_balance, $op_curr, $op_date, $current_balance,
-                $created_by // <-- ARTIK KAYIT EDİLİYOR
+                $created_by
             ]);
             
             $last_id = $pdo->lastInsertId();
@@ -164,9 +157,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// LİSTELEME
-$sql = "SELECT c.*, (SELECT COUNT(*) FROM transactions WHERE customer_id = c.id) as tx_count FROM customers c ORDER BY c.id DESC";
-$customers = $pdo->query($sql)->fetchAll();
+// --- LİSTELEME VE ARAMA MANTIĞI (YENİLENDİ) ---
+$search = isset($_GET['q']) ? trim($_GET['q']) : '';
+$params = [];
+
+// Canlı Bakiye Sorgusu:
+// Açılış Bakiyesi + (Toplam Tahsilat - Toplam Ödeme)
+$sql = "SELECT c.*, 
+        (SELECT COUNT(*) FROM transactions WHERE customer_id = c.id) as tx_count,
+        (
+            c.opening_balance 
+            + COALESCE((SELECT SUM(amount) FROM transactions WHERE customer_id = c.id AND type = 'credit'), 0) 
+            - COALESCE((SELECT SUM(amount) FROM transactions WHERE customer_id = c.id AND type = 'debt'), 0)
+        ) as live_balance 
+        FROM customers c";
+
+if ($search) {
+    $sql .= " WHERE (c.company_name LIKE ? OR c.contact_name LIKE ? OR c.tax_number LIKE ? OR c.tc_number LIKE ? OR c.customer_code LIKE ?)";
+    $params = ["%$search%", "%$search%", "%$search%", "%$search%", "%$search%"];
+}
+
+$sql .= " ORDER BY c.id DESC";
+
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$customers = $stmt->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="tr">
@@ -187,8 +202,8 @@ $customers = $pdo->query($sql)->fetchAll();
 
     <div class="container-fluid px-4">
         
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>Cari Kartlar</h2>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 class="mb-0">Cari Kartlar</h2>
             <button type="button" class="btn btn-success" onclick="openModal('add')">
                 <i class="fa fa-plus"></i> Yeni Cari Ekle
             </button>
@@ -198,6 +213,25 @@ $customers = $pdo->query($sql)->fetchAll();
             if(isset($_GET['msg']) && $_GET['msg']=='deleted') echo '<div class="alert alert-warning">Cari kart silindi.</div>';
             echo $message; 
         ?>
+
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-body p-2 bg-light rounded">
+                <form method="GET" action="customers.php" class="row g-2 align-items-center">
+                    <div class="col-md-10">
+                        <div class="input-group">
+                            <span class="input-group-text bg-white border-end-0"><i class="fa fa-search text-muted"></i></span>
+                            <input type="text" name="q" class="form-control border-start-0 ps-0" placeholder="Cari Ünvan, Kod, Vergi No, İsim ile ara..." value="<?php echo guvenli_html($search); ?>">
+                        </div>
+                    </div>
+                    <div class="col-md-2 d-grid gap-2 d-md-flex justify-content-md-end">
+                        <button type="submit" class="btn btn-primary flex-grow-1">Ara</button>
+                        <?php if($search): ?>
+                            <a href="customers.php" class="btn btn-outline-secondary">Temizle</a>
+                        <?php endif; ?>
+                    </div>
+                </form>
+            </div>
+        </div>
 
         <div class="card shadow">
             <div class="card-body p-0">
@@ -218,12 +252,15 @@ $customers = $pdo->query($sql)->fetchAll();
                                 <?php foreach ($customers as $c): ?>
                                     
                                     <?php 
-                                        // EKSİK BİLGİ KONTROLÜ
                                         $is_missing = false;
                                         if (strpos($c['tc_number'], 'G-TC-') !== false || strpos($c['tax_number'], 'G-VN-') !== false) {
                                             $is_missing = true;
                                         }
                                         $row_class = $is_missing ? 'missing-info' : '';
+                                        
+                                        // Canlı Bakiye Rengi
+                                        $bal_val = $c['live_balance'];
+                                        $bal_color = ($bal_val < 0) ? 'text-danger' : (($bal_val > 0) ? 'text-success' : 'text-muted');
                                     ?>
 
                                     <tr class="<?php echo $row_class; ?>">
@@ -247,9 +284,11 @@ $customers = $pdo->query($sql)->fetchAll();
                                             <?php endif; ?>
                                         </td>
                                         <td class="text-center"><span class="badge bg-light text-dark border"><?php echo $c['tx_count']; ?></span></td>
-                                        <td class="text-end fw-bold">
-                                            <?php echo number_format($c['current_balance'], 2, ',', '.'); ?> ₺
+                                        
+                                        <td class="text-end fw-bold <?php echo $bal_color; ?>">
+                                            <?php echo number_format($bal_val, 2, ',', '.'); ?> ₺
                                         </td>
+                                        
                                         <td class="text-center">
                                             <button type="button" class="btn btn-sm btn-secondary" onclick="showHistory(<?php echo $c['id']; ?>, '<?php echo guvenli_html($c['company_name']); ?>')" title="Geçmiş">
                                                 <i class="fa fa-history"></i>
@@ -269,7 +308,7 @@ $customers = $pdo->query($sql)->fetchAll();
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="6" class="text-center p-3">Kayıtlı cari hesap yok.</td></tr>
+                                <tr><td colspan="6" class="text-center p-3 text-muted">Kayıt bulunamadı.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -309,18 +348,23 @@ $customers = $pdo->query($sql)->fetchAll();
                         <div class="row mb-3">
                             <div class="col-md-3">
                                 <label class="form-label fw-bold">Cari Türü</label>
-                                <select name="customer_type" id="customer_type" class="form-select" onchange="toggleTypeFields()">
+                                <select name="customer_type" id="customer_type" class="form-select" onchange="toggleTypeFields(); generateCustomerCode();">
                                     <option value="legal">Tüzel Kişi (Şirket)</option>
                                     <option value="real">Gerçek Kişi (Şahıs)</option>
                                 </select>
                             </div>
                             <div class="col-md-3">
-                                <label class="form-label">Cari Kodu *</label>
-                                <input type="text" name="customer_code" id="customer_code" class="form-control" required placeholder="Örn: C-001">
+                                <label class="form-label">Cari Kodu <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="text" name="customer_code" id="customer_code" class="form-control fw-bold bg-light" readonly required placeholder="Otomatik">
+                                    <button type="button" class="btn btn-outline-secondary" onclick="generateCustomerCode()" title="Yeniden Oluştur">
+                                        <i class="fa fa-sync"></i>
+                                    </button>
+                                </div>
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-bold">Cari Başlık / Ünvan *</label>
-                                <input type="text" name="company_name" id="company_name" class="form-control" required placeholder="Firma Adı veya Ad Soyad">
+                                <input type="text" name="company_name" id="company_name" class="form-control" required placeholder="Firma Adı veya Ad Soyad" onblur="generateCustomerCode()">
                             </div>
                         </div>
 
@@ -336,12 +380,11 @@ $customers = $pdo->query($sql)->fetchAll();
                                 </label>
                             </div>
                             <div class="ms-3 small">
-                                <i class="fa fa-info-circle"></i> Eğer TC veya Vergi No henüz gelmediyse bunu işaretleyin. Sistem geçici bir numara atayacaktır. Daha sonra güncellemeyi unutmayın!
+                                <i class="fa fa-info-circle"></i> Eğer TC veya Vergi No henüz gelmediyse bunu işaretleyin.
                             </div>
                         </div>
 
                         <div class="row mb-3 p-3 bg-light rounded border">
-                            
                             <div class="col-md-6 legal-field">
                                 <label class="form-label">Vergi Dairesi</label>
                                 <input type="text" name="tax_office" id="tax_office" class="form-control">
@@ -393,12 +436,12 @@ $customers = $pdo->query($sql)->fetchAll();
 
                         <div class="row mb-3">
                             <div class="col-md-3">
-                                <label>Ülke</label>
-                                <input type="text" name="country" id="country" class="form-control" value="Türkiye">
+                                <label class="fw-bold">Ülke <span class="text-danger">*</span></label>
+                                <input type="text" name="country" id="country" class="form-control" value="Türkiye" required>
                             </div>
                             <div class="col-md-3">
-                                <label>Şehir</label>
-                                <input type="text" name="city" id="city" class="form-control" value="İstanbul">
+                                <label class="fw-bold">Şehir <span class="text-danger">*</span></label>
+                                <input type="text" name="city" id="city" class="form-control" value="İstanbul" required>
                             </div>
                             <div class="col-md-6">
                                 <label>Adres</label>
@@ -406,29 +449,30 @@ $customers = $pdo->query($sql)->fetchAll();
                             </div>
                         </div>
 
-                        <hr>
-
-                        <h6 class="text-primary"><i class="fa fa-balance-scale"></i> Açılış / Devir</h6>
-                        <div class="row mb-3">
-                            <div class="col-md-4">
-                                <label>Devir Bakiyesi</label>
-                                <input type="number" step="0.01" name="opening_balance" id="opening_balance" class="form-control" value="0.00">
-                                <small class="text-muted">Borçlu (+), Alacaklı (-)</small>
+                        <?php if(isset($_SESSION['role']) && ($_SESSION['role'] == 'admin' || $_SESSION['role'] == 'muhasebe')): ?>
+                            <hr>
+                            <h6 class="text-primary"><i class="fa fa-balance-scale"></i> Açılış / Devir</h6>
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <label>Devir Bakiyesi</label>
+                                    <input type="number" step="0.01" name="opening_balance" id="opening_balance" class="form-control" value="0.00">
+                                    <small class="text-muted">Borçlu (+), Alacaklı (-)</small>
+                                </div>
+                                <div class="col-md-4">
+                                    <label>Döviz</label>
+                                    <select name="opening_balance_currency" id="opening_balance_currency" class="form-select">
+                                        <option value="TRY">TL</option>
+                                        <option value="USD">USD</option>
+                                        <option value="EUR">EUR</option>
+                                        <option value="GBP">GBP</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label>Tarih</label>
+                                    <input type="date" name="opening_balance_date" id="opening_balance_date" class="form-control" value="<?php echo date('Y-m-d'); ?>">
+                                </div>
                             </div>
-                            <div class="col-md-4">
-                                <label>Döviz</label>
-                                <select name="opening_balance_currency" id="opening_balance_currency" class="form-select">
-                                    <option value="TRY">TL</option>
-                                    <option value="USD">USD</option>
-                                    <option value="EUR">EUR</option>
-                                    <option value="GBP">GBP</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <label>Tarih</label>
-                                <input type="date" name="opening_balance_date" id="opening_balance_date" class="form-control" value="<?php echo date('Y-m-d'); ?>">
-                            </div>
-                        </div>
+                        <?php endif; ?>
 
                     </div>
                     <div class="modal-footer">
@@ -460,6 +504,26 @@ $customers = $pdo->query($sql)->fetchAll();
             .catch(error => { document.getElementById('historyContent').innerHTML = '<div class="alert alert-danger">Veri çekilemedi.</div>'; });
         }
 
+        // --- CARİ KOD ÜRETME ---
+        function generateCustomerCode() {
+            var name = document.getElementById('company_name').value;
+            var type = document.getElementById('customer_type').value; 
+            
+            if (name.length < 2) return;
+
+            var formData = new FormData();
+            formData.append('name', name);
+            formData.append('type', type);
+            
+            fetch('api-generate-code.php', { method: 'POST', body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        document.getElementById('customer_code').value = data.code;
+                    }
+                });
+        }
+
         // --- GEÇİCİ KAYIT KONTROLÜ ---
         function toggleTemporary() {
             var isTemp = document.getElementById('is_temporary').checked;
@@ -468,16 +532,12 @@ $customers = $pdo->query($sql)->fetchAll();
             var passInput = document.getElementById('passport_number');
 
             if (isTemp) {
-                // Geçici ise zorunlulukları kaldır
                 taxInput.required = false;
                 tcInput.required = false;
                 passInput.required = false;
-                
-                // Kullanıcıya bilgi ver
                 taxInput.placeholder = "Otomatik Geçici No Atanacak";
                 tcInput.placeholder = "Otomatik Geçici No Atanacak";
             } else {
-                // Değilse normal moda dön (Type kontrolünü tekrar çalıştır)
                 taxInput.placeholder = "10 Haneli";
                 tcInput.placeholder = "11 Haneli";
                 toggleTypeFields();
@@ -485,7 +545,6 @@ $customers = $pdo->query($sql)->fetchAll();
         }
 
         function toggleTypeFields() {
-            // Eğer "Geçici" işaretliyse zorunluluk koyma
             if(document.getElementById('is_temporary').checked) return;
 
             var type = document.getElementById('customer_type').value;
@@ -542,7 +601,6 @@ $customers = $pdo->query($sql)->fetchAll();
                 document.getElementById('company_name').value = data.company_name;
                 document.getElementById('contact_name').value = data.contact_name;
                 
-                // Veri içinde G-TC veya G-VN varsa "Geçici" olarak işaretle
                 if ((data.tc_number && data.tc_number.includes('G-TC-')) || 
                     (data.tax_number && data.tax_number.includes('G-VN-'))) {
                     document.getElementById('is_temporary').checked = true;
@@ -563,9 +621,12 @@ $customers = $pdo->query($sql)->fetchAll();
                 document.getElementById('city').value = data.city;
                 document.getElementById('address').value = data.address;
                 
-                document.getElementById('opening_balance').value = data.opening_balance;
-                document.getElementById('opening_balance_currency').value = data.opening_balance_currency;
-                document.getElementById('opening_balance_date').value = data.opening_balance_date;
+                // YETKİ KONTROLÜ: EĞER ALANLAR VARSA DOLDUR (YOKSA HATA VERMEZ)
+                if(document.getElementById('opening_balance')) {
+                    document.getElementById('opening_balance').value = data.opening_balance;
+                    document.getElementById('opening_balance_currency').value = data.opening_balance_currency;
+                    document.getElementById('opening_balance_date').value = data.opening_balance_date;
+                }
 
             } else {
                 document.getElementById('modalTitle').innerText = "Yeni Cari Kart Ekle";
@@ -575,9 +636,30 @@ $customers = $pdo->query($sql)->fetchAll();
             }
             
             toggleTypeFields();
-            toggleTemporary(); // Başlangıç durumunu ayarla
+            toggleTemporary(); 
             modal.show();
         }
     </script>
+    
+    <?php
+    if (isset($_GET['edit_id'])) {
+        $edit_id = (int)$_GET['edit_id'];
+        $stmt_edit = $pdo->prepare("SELECT * FROM customers WHERE id = ?");
+        $stmt_edit->execute([$edit_id]);
+        $edit_data = $stmt_edit->fetch(PDO::FETCH_ASSOC);
+
+        if ($edit_data) {
+            ?>
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    var customerData = <?php echo json_encode($edit_data); ?>;
+                    openModal('edit', customerData);
+                    window.history.replaceState({}, document.title, "customers.php");
+                });
+            </script>
+            <?php
+        }
+    }
+    ?>
 </body>
 </html>

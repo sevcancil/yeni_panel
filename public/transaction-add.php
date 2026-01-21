@@ -278,7 +278,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
 
                     <div class="form-section">
-                        <h6 class="section-title">Fatura & Vade</h6>
+                        <h6 class="section-title">Fatura</h6>
                         
                         <div id="payment_invoice_fields">
                             <div class="mb-3">
@@ -309,11 +309,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     İşaretlenmezse: "Fatura Onayı Bekliyor"
                                 </small>
                             </div>
-                        </div>
-
-                        <div class="mb-2">
-                            <label class="form-label">Vade Tarihi</label>
-                            <input type="date" name="due_date" class="form-control">
                         </div>
                     </div>
 

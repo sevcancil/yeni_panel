@@ -161,7 +161,7 @@ try {
         if ($paid > 0) {
             $paid_display = number_format($paid, 2, ',', '.') . ' ₺';
             $paid_icon = ($remaining <= 0.05) ? '<i class="fa fa-check-double"></i>' : '<i class="fa fa-check"></i>';
-            $tl_amt_html = '<div class="d-flex flex-column align-items-end"><span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span><small class="text-success fw-bold" style="font-size:0.75rem;">' . $paid_icon . ' Ödenen: ' . $paid_display . '</small></div>';
+            $tl_amt_html = '<div class="d-flex flex-column align-items-end"><span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span><small class="text-success fw-bold" style="font-size:0.75rem;">' . $paid_icon . ' Ödenen/Tahsil Edilen: ' . $paid_display . '</small></div>';
         } else {
             $tl_amt_html = '<span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span>';
         }

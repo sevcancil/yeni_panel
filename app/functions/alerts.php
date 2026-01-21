@@ -72,7 +72,7 @@ function get_user_alerts($pdo, $user_id, $is_admin) {
             'icon' => 'fa-id-card',
             'title' => 'Kimlik Bilgisi Eksik',
             'msg' => $who . "<b>" . guvenli_html($row['company_name']) . "</b> için geçerli bir TC veya Vergi No girilmedi.",
-            'link' => 'customer-details.php?id=' . $row['id'], 
+            'link' => 'customers.php?edit_id=' . $row['id'], 
             'btn_text' => 'Tamamla'
         ];
     }

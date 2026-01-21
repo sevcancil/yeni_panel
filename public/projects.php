@@ -120,8 +120,8 @@ $projects = $pdo->query($sql)->fetchAll();
                             <tr>
                                 <th>Kod</th>
                                 <th>Etkinlik / İş Adı</th>
-                                <th>İş Veren</th>
-                                <th>Tarih</th>
+                                <th>Organizasyon Temsilcisi</th>
+                                <th>İşin Tarih</th>
                                 <th class="text-end">Gelir</th>
                                 <th class="text-end">Gider</th>
                                 <th class="text-end">Kâr/Zarar</th>
@@ -200,7 +200,7 @@ $projects = $pdo->query($sql)->fetchAll();
                         <input type="hidden" name="edit_id" id="edit_id">
                         
                         <div class="alert alert-info small">
-                            <i class="fa fa-info-circle"></i> Tur kodu formatı: <b>TARİH - İŞVEREN - İŞ ADI - BÖLÜM</b>
+                            <i class="fa fa-info-circle"></i> Tur kodu formatı: <b>Etkinlik Tarihi - Org.Temsilcisi - İş Adı - Bölüm</b>
                         </div>
 
                         <div class="row">
@@ -216,11 +216,11 @@ $projects = $pdo->query($sql)->fetchAll();
                                 </select>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label>Tarih</label>
+                                <label>İşin Tarihi</label>
                                 <input type="date" id="dateInput" name="start_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required onchange="generateCode()">
                             </div>
                         </div>
-                        <div class="mb-3"><label>İş Veren</label><input type="text" id="employerInput" name="employer" class="form-control" oninput="generateCode()"></div>
+                        <div class="mb-3"><label>Organizasyon Temsilcisi</label><input type="text" id="employerInput" name="employer" class="form-control" oninput="generateCode()"></div>
                         <div class="mb-3"><label>İş Adı</label><input type="text" id="nameInput" name="name" class="form-control" required oninput="generateCode()"></div>
                         <div class="mb-3"><label>Tur Kodu</label><div class="input-group"><input type="text" id="codeInput" name="code" class="form-control fw-bold" required><button type="button" class="btn btn-outline-secondary" onclick="generateCode()"><i class="fa fa-sync"></i></button></div></div>
                     </div>

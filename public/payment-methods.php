@@ -1,4 +1,5 @@
 <?php
+// public/payment-methods.php
 session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
@@ -13,8 +14,6 @@ if (isset($_GET['delete_id'])) {
     if(has_permission('delete_data')) {
         $del_id = (int)$_GET['delete_id'];
         
-        // Bu ödeme yöntemi kullanılmış mı? Kontrolü (İleride transactions tablosuna method_id eklersek açarız)
-        // Şimdilik direkt siliyoruz.
         $stmt = $pdo->prepare("DELETE FROM payment_methods WHERE id = ?");
         $stmt->execute([$del_id]);
         
@@ -76,40 +75,54 @@ $methods = $pdo->query("SELECT * FROM payment_methods ORDER BY id ASC")->fetchAl
             echo $message; 
         ?>
 
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-body p-2 bg-light rounded">
+                <div class="input-group">
+                    <span class="input-group-text bg-white border-end-0"><i class="fa fa-search text-muted"></i></span>
+                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Ödeme yöntemi ara...">
+                </div>
+            </div>
+        </div>
+
         <div class="card shadow-sm">
             <div class="card-body p-0">
-                <table class="table table-hover table-striped mb-0 align-middle">
-                    <thead class="table-light">
-                        <tr>
-                            <th width="10%">#ID</th>
-                            <th>Ödeme Yöntemi Adı</th>
-                            <th>Eklenme Tarihi</th>
-                            <th class="text-center" width="15%">İşlemler</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach($methods as $m): ?>
+                <div class="table-responsive">
+                    <table class="table table-hover table-striped mb-0 align-middle" id="methodsTable">
+                        <thead class="table-light">
                             <tr>
-                                <td><?php echo $m['id']; ?></td>
-                                <td class="fw-bold"><?php echo guvenli_html($m['title']); ?></td>
-                                <td><?php echo date('d.m.Y H:i', strtotime($m['created_at'])); ?></td>
-                                <td class="text-center">
-                                    <button class="btn btn-sm btn-warning" onclick='openModal("edit", <?php echo json_encode($m); ?>)'>
-                                        <i class="fa fa-edit"></i>
-                                    </button>
-                                    
-                                    <?php if(has_permission('delete_data')): ?>
-                                        <a href="payment-methods.php?delete_id=<?php echo $m['id']; ?>" 
-                                           class="btn btn-sm btn-danger"
-                                           onclick="return confirm('Silmek istediğinize emin misiniz?');">
-                                            <i class="fa fa-trash"></i>
-                                        </a>
-                                    <?php endif; ?>
-                                </td>
+                                <th width="10%">#ID</th>
+                                <th>Ödeme Yöntemi Adı</th>
+                                <th>Eklenme Tarihi</th>
+                                <th class="text-center" width="15%">İşlemler</th>
                             </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            <?php foreach($methods as $m): ?>
+                                <tr>
+                                    <td><?php echo $m['id']; ?></td>
+                                    <td class="fw-bold search-col"><?php echo guvenli_html($m['title']); ?></td>
+                                    <td><?php echo date('d.m.Y H:i', strtotime($m['created_at'])); ?></td>
+                                    <td class="text-center">
+                                        <button class="btn btn-sm btn-warning" onclick='openModal("edit", <?php echo json_encode($m); ?>)'>
+                                            <i class="fa fa-edit"></i>
+                                        </button>
+                                        
+                                        <?php if(has_permission('delete_data')): ?>
+                                            <a href="payment-methods.php?delete_id=<?php echo $m['id']; ?>" 
+                                               class="btn btn-sm btn-danger"
+                                               onclick="return confirm('Silmek istediğinize emin misiniz?');">
+                                                <i class="fa fa-trash"></i>
+                                            </a>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <div id="noResults" class="text-center p-3 text-muted d-none">
+                        Kayıt bulunamadı.
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -154,6 +167,30 @@ $methods = $pdo->query("SELECT * FROM payment_methods ORDER BY id ASC")->fetchAl
             }
             modal.show();
         }
+
+        // --- ANLIK ARAMA FONKSİYONU ---
+        document.getElementById('searchInput').addEventListener('keyup', function() {
+            var filter = this.value.toLowerCase();
+            var rows = document.querySelectorAll('#methodsTable tbody tr');
+            var noResults = document.getElementById('noResults');
+            var hasVisible = false;
+
+            rows.forEach(function(row) {
+                var text = row.querySelector('.search-col').innerText.toLowerCase();
+                if (text.includes(filter)) {
+                    row.classList.remove('d-none');
+                    hasVisible = true;
+                } else {
+                    row.classList.add('d-none');
+                }
+            });
+
+            if(hasVisible) {
+                noResults.classList.add('d-none');
+            } else {
+                noResults.classList.remove('d-none');
+            }
+        });
     </script>
 </body>
 </html>
