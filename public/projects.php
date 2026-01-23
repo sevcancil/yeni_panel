@@ -1,4 +1,6 @@
 <?php
+// public/projects.php
+
 session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
@@ -40,9 +42,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $employer = temizle($_POST['employer']);
     $start_date = $_POST['start_date'];
     
+    // YENİ: Departman ID'sini al
+    $department_id = !empty($_POST['department_id']) ? $_POST['department_id'] : null;
+    
     $is_edit = isset($_POST['edit_id']) && !empty($_POST['edit_id']);
     $edit_id = $is_edit ? (int)$_POST['edit_id'] : 0;
 
+    // Kod tekrarı kontrolü
     $sql_check = "SELECT id FROM tour_codes WHERE code = ?";
     $params_check = [$code];
     
@@ -58,13 +64,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = '<div class="alert alert-danger">Bu Tur Kodu zaten kullanılıyor!</div>';
     } else {
         if ($is_edit) {
-            $stmt = $pdo->prepare("UPDATE tour_codes SET code = ?, name = ?, employer = ?, start_date = ? WHERE id = ?");
-            $stmt->execute([$code, $name, $employer, $start_date, $edit_id]);
+            // GÜNCELLEME: department_id eklendi
+            $stmt = $pdo->prepare("UPDATE tour_codes SET code = ?, name = ?, employer = ?, start_date = ?, department_id = ? WHERE id = ?");
+            $stmt->execute([$code, $name, $employer, $start_date, $department_id, $edit_id]);
+            
             log_action($pdo, 'project', $edit_id, 'update', "$code - $name projesi güncellendi.");
             $message = '<div class="alert alert-success">Proje güncellendi!</div>';
         } else {
-            $stmt = $pdo->prepare("INSERT INTO tour_codes (code, name, employer, start_date) VALUES (?, ?, ?, ?)");
-            $stmt->execute([$code, $name, $employer, $start_date]);
+            // EKLEME: department_id eklendi
+            $stmt = $pdo->prepare("INSERT INTO tour_codes (code, name, employer, start_date, department_id) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$code, $name, $employer, $start_date, $department_id]);
+            
             log_action($pdo, 'project', $pdo->lastInsertId(), 'create', "$code - $name yeni projesi oluşturuldu.");
             $message = '<div class="alert alert-success">Yeni proje oluşturuldu!</div>';
         }
@@ -73,10 +83,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $departments = $pdo->query("SELECT * FROM departments ORDER BY name ASC")->fetchAll();
 
-$sql = "SELECT t.*, 
+// Listeleme Sorgusu: Departman adını da çekmek için LEFT JOIN ekledik
+$sql = "SELECT t.*, d.name as department_name,
         (SELECT SUM(amount) FROM transactions WHERE tour_code_id = t.id AND type = 'credit') as total_income,
         (SELECT SUM(amount) FROM transactions WHERE tour_code_id = t.id AND type = 'debt') as total_expense
         FROM tour_codes t 
+        LEFT JOIN departments d ON t.department_id = d.id
         ORDER BY t.start_date DESC";
 $projects = $pdo->query($sql)->fetchAll();
 ?>
@@ -119,7 +131,7 @@ $projects = $pdo->query($sql)->fetchAll();
                         <thead class="table-light">
                             <tr>
                                 <th>Kod</th>
-                                <th>Etkinlik / İş Adı</th>
+                                <th>Bölüm</th> <th>Etkinlik / İş Adı</th>
                                 <th>Organizasyon Temsilcisi</th>
                                 <th>İşin Tarih</th>
                                 <th class="text-end">Gelir</th>
@@ -136,8 +148,6 @@ $projects = $pdo->query($sql)->fetchAll();
                         $expense = $p['total_expense'] ?? 0;
                         $profit = $income - $expense; 
                         
-                        // RENK BELİRLEME
-                        // Kâr >= 0 ise Yeşil (success), Zarar ise Kırmızı (danger)
                         $badge_class = ($profit >= 0) ? 'bg-success' : 'bg-danger';
                     ?>
                     <tr>
@@ -146,6 +156,14 @@ $projects = $pdo->query($sql)->fetchAll();
                                 <?php echo guvenli_html($p['code']); ?>
                             </span>
                         </td>
+                        <td>
+                            <?php if(!empty($p['department_name'])): ?>
+                                <span class="badge bg-secondary"><?php echo guvenli_html($p['department_name']); ?></span>
+                            <?php else: ?>
+                                <span class="text-muted small">-</span>
+                            <?php endif; ?>
+                        </td>
+                        
                         <td><strong><?php echo guvenli_html($p['name']); ?></strong></td>
                         <td><?php echo guvenli_html($p['employer']); ?></td>
                         <td><?php echo date('d.m.Y', strtotime($p['start_date'])); ?></td>
@@ -206,7 +224,7 @@ $projects = $pdo->query($sql)->fetchAll();
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Bölüm</label>
-                                <select id="deptSelect" class="form-select" onchange="generateCode()">
+                                <select id="deptSelect" name="department_id" class="form-select" onchange="generateCode()">
                                     <option value="" data-short="">Seçiniz...</option>
                                     <?php foreach($departments as $d): 
                                         $short = strtoupper(substr(str_replace(['İ','ı','Ş','ş','Ğ','ğ','Ü','ü','Ö','ö','Ç','ç'], ['I','i','S','s','G','g','U','u','O','o','C','c'], $d['name']), 0, 4));
@@ -267,26 +285,6 @@ $projects = $pdo->query($sql)->fetchAll();
                 });
         }
 
-        function exportTableToExcel(tableID, filename = ''){
-            var downloadLink;
-            var dataType = 'application/vnd.ms-excel';
-            var tableSelect = document.getElementById(tableID);
-            var tableHTML = tableSelect.outerHTML.replace(/ /g, '%20');
-            
-            filename = filename?filename+'.xls':'excel_data.xls';
-            downloadLink = document.createElement("a");
-            document.body.appendChild(downloadLink);
-            
-            if(navigator.msSaveOrOpenBlob){
-                var blob = new Blob(['\ufeff', tableHTML], { type: dataType });
-                navigator.msSaveOrOpenBlob( blob, filename);
-            }else{
-                downloadLink.href = 'data:' + dataType + ', ' + tableHTML;
-                downloadLink.download = filename;
-                downloadLink.click();
-            }
-        }
-
         function openModal(mode, data = null) {
             document.getElementById('projectForm').reset();
             if (mode === 'edit' && data) {
@@ -296,14 +294,21 @@ $projects = $pdo->query($sql)->fetchAll();
                 document.getElementById('employerInput').value = data.employer; 
                 document.getElementById('codeInput').value = data.code;
                 document.getElementById('dateInput').value = data.start_date;
+                
+                // Bölüm Seçimi (Eğer varsa)
+                if(data.department_id) {
+                    document.getElementById('deptSelect').value = data.department_id;
+                }
             } else {
                 document.getElementById('modalTitle').innerText = "Yeni İş / Tur Tanımla";
                 document.getElementById('edit_id').value = "";
                 document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
+                document.getElementById('deptSelect').value = "";
             }
             projectModal.show();
         }
 
+        // generateCode() fonksiyonu aynen kalıyor
         function generateCode() {
             let dateVal = document.getElementById('dateInput').value; 
             let datePart = "000000";
