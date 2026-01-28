@@ -1,13 +1,23 @@
 <?php
 // public/transaction-edit.php
-session_start();
+
+// DÜZELTME: Oturum zaten açıksa tekrar başlatma, kapalıysa başlat.
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
 
 // Oturum kontrolü
 if (!isset($_SESSION['user_id'])) { 
     if($_SERVER['REQUEST_METHOD'] === 'POST') { echo json_encode(['status'=>'error', 'message'=>'Oturum kapalı.']); exit; }
-    exit('<div class="alert alert-danger">Yetkisiz erişim.</div>'); 
+    // Eğer include edildiyse exit yapma, sadece içeriği gösterme
+    if (basename($_SERVER['PHP_SELF']) == basename(__FILE__)) {
+        exit('<div class="alert alert-danger">Yetkisiz erişim.</div>'); 
+    } else {
+        return; // Include edildiyse çıkış yap
+    }
 }
 
 $id = isset($_REQUEST['id']) ? (int)$_REQUEST['id'] : 0;
