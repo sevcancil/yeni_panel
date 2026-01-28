@@ -22,6 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $post_id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
         
+        // Eski veriyi çek (Değişiklik kontrolü için)
         $stmt_old = $pdo->prepare("SELECT * FROM transactions WHERE id = ?");
         $stmt_old->execute([$post_id]);
         $old_data = $stmt_old->fetch(PDO::FETCH_ASSOC);
@@ -35,23 +36,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $department_id = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
         $doc_type = $_POST['doc_type_hidden'] ?? $old_data['doc_type']; 
         
-        // --- TUTAR VE DÖVİZ HESAPLAMA (DÜZELTİLDİ) ---
-        $input_amount = (float)($_POST['amount'] ?? 0); // Kullanıcının girdiği sayı
+        // Tutar ve Döviz Hesaplama
+        $input_amount = (float)($_POST['amount'] ?? 0);
         $currency = $_POST['currency'] ?? 'TRY';
         $exchange_rate = (float)($_POST['exchange_rate'] ?? 1);
         
-        if ($currency === 'TRY') {
-            $amount_tl = $input_amount;      // TL ise direkt tutar
-            $original_amount = 0;            // TRY için orijinal döviz tutarı 0 tutulur (Standart)
-            $exchange_rate = 1.0000;         // TL kuru hep 1
+        if (trim($currency) === 'TRY') {
+            $amount_tl = $input_amount;
+            $original_amount = 0; 
+            $exchange_rate = 1.0000;
         } else {
-            $original_amount = $input_amount;// Döviz ise girilen tutar orijinaldir
-            $amount_tl = $input_amount * $exchange_rate; // TL karşılığı hesaplanır
+            $original_amount = $input_amount;
+            $amount_tl = $input_amount * $exchange_rate;
         }
 
         $description = temizle($_POST['description'] ?? '');
         $recipient_bank_id = !empty($_POST['bank_id']) ? (int)$_POST['bank_id'] : null;
         $payment_channel_id = !empty($_POST['collection_channel_id']) ? (int)$_POST['collection_channel_id'] : null;
+        
+        // Fatura Bilgileri
         $invoice_no = temizle($_POST['invoice_no'] ?? '');
         $invoice_date = !empty($_POST['invoice_date']) ? $_POST['invoice_date'] : null;
         
@@ -63,7 +66,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (isset($_POST['issue_invoice_check'])) {
                 $invoice_status = 'to_be_issued'; 
             } else {
-                // Eğer zaten kesildiyse bozma, değilse onaya çek
                 if ($invoice_status != 'issued') {
                     $invoice_status = 'waiting_approval';
                 }
@@ -86,6 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // GÜNCELLEME SORGUSU
         $sql = "UPDATE transactions SET 
                 date=?, customer_id=?, tour_code_id=?, department_id=?, 
                 amount=?, original_amount=?, currency=?, exchange_rate=?, description=?, 
@@ -102,7 +105,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $post_id
         ]);
 
+        // --- LOGLAMA MANTIĞI ---
         $log_msg = "Kayıt güncellendi.";
+
+        // Fatura Numarası Değiştiyse Logla
+        if ($old_data['invoice_no'] != $invoice_no) {
+            if (empty($old_data['invoice_no']) && !empty($invoice_no)) {
+                // Yeni Fatura Girildi
+                $log_msg = "Fatura Girildi: $invoice_no (" . number_format($amount_tl, 2) . " TL)";
+                
+                // İsteğe bağlı: Cari hareketlerine de yansısın diye ana log sistemine ekstra detay eklenebilir
+                // Ancak transaction logları zaten caride görünüyor.
+            } elseif (!empty($old_data['invoice_no']) && empty($invoice_no)) {
+                // Fatura Silindi
+                $log_msg = "Fatura Silindi (Eski No: " . $old_data['invoice_no'] . ")";
+            } else {
+                // Fatura Değişti
+                $log_msg = "Fatura No Güncellendi: " . $old_data['invoice_no'] . " -> " . $invoice_no;
+            }
+        }
+
         log_action($pdo, 'transaction', $post_id, 'update', $log_msg);
 
         ob_end_clean();
@@ -128,7 +150,6 @@ $projects = $pdo->query("SELECT id, code FROM tour_codes WHERE status='active' O
 $departments = $pdo->query("SELECT id, name FROM departments ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $collection_channels = $pdo->query("SELECT id, title FROM collection_channels ORDER BY title")->fetchAll(PDO::FETCH_ASSOC);
 
-// Cari Bankaları
 $customer_banks = [];
 if ($t['customer_id']) {
     try {
@@ -138,9 +159,8 @@ if ($t['customer_id']) {
     } catch(Exception $e) { $customer_banks = []; }
 }
 
-// --- GÖSTERİLECEK TUTAR BELİRLEME (SORUNUN ÇÖZÜMÜ) ---
-// Eğer TRY ise 'amount' (TL) sütununu göster, Döviz ise 'original_amount' sütununu göster.
-$display_amount = ($t['currency'] == 'TRY') ? $t['amount'] : $t['original_amount'];
+$db_currency = trim($t['currency']);
+$display_amount = ($db_currency === 'TRY') ? $t['amount'] : $t['original_amount'];
 $display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
 ?>
 
@@ -199,10 +219,10 @@ $display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
         <div class="col-md-3">
             <label class="form-label small fw-bold">Birim</label>
             <select name="currency" id="edit_currency" class="form-select" onchange="updateEditRate()">
-                <option value="TRY" <?php echo $t['currency'] == 'TRY' ? 'selected' : ''; ?>>TRY</option>
-                <option value="USD" <?php echo $t['currency'] == 'USD' ? 'selected' : ''; ?>>USD</option>
-                <option value="EUR" <?php echo $t['currency'] == 'EUR' ? 'selected' : ''; ?>>EUR</option>
-                <option value="GBP" <?php echo $t['currency'] == 'GBP' ? 'selected' : ''; ?>>GBP</option>
+                <option value="TRY" <?php echo $db_currency === 'TRY' ? 'selected' : ''; ?>>TRY</option>
+                <option value="USD" <?php echo $db_currency === 'USD' ? 'selected' : ''; ?>>USD</option>
+                <option value="EUR" <?php echo $db_currency === 'EUR' ? 'selected' : ''; ?>>EUR</option>
+                <option value="GBP" <?php echo $db_currency === 'GBP' ? 'selected' : ''; ?>>GBP</option>
             </select>
         </div>
         <div class="col-md-3">
@@ -245,13 +265,12 @@ $display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
 
     <div class="mb-3 border p-3 rounded">
         <h6 class="text-muted border-bottom pb-2">Fatura & Belge Durumu</h6>
-        
         <?php if($t['doc_type'] == 'payment_order'): ?>
             <div id="payment_invoice_fields">
                 <div class="row mb-2">
                     <div class="col-md-6">
-                        <label class="form-label">Gelen Fatura No</label>
-                        <input type="text" name="invoice_no" class="form-control" value="<?php echo guvenli_html($t['invoice_no']); ?>">
+                        <label class="form-label fw-bold">Gelen Fatura No</label>
+                        <input type="text" name="invoice_no" class="form-control" value="<?php echo guvenli_html($t['invoice_no']); ?>" placeholder="Fatura No Giriniz">
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Fatura Tarihi</label>
@@ -302,7 +321,6 @@ $display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
         document.getElementById('edit_tl_result').innerText = tl.toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' ₺';
     }
 
-    // YENİ: Kuru API'den çekme fonksiyonu
     function updateEditRate() {
         var currency = document.getElementById('edit_currency').value;
         var rateInput = document.getElementById('edit_rate');
@@ -313,14 +331,10 @@ $display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
             calcEditTL(); 
         } else { 
             rateInput.readOnly = false; 
-            
-            // Eğer rate zaten 1 ise (yeni dönüşüm) veya kullanıcı isterse api'den çeksin
-            // Otomatik çekmek yerine placeholder koyuyoruz, kullanıcı girmeli veya butona basmalı.
-            // Ama pratiklik için otomatik çekelim:
             rateInput.placeholder = "Yükleniyor...";
             
             $.get('api-get-currency-rate.php?code='+currency, function(d){ 
-                if(d.status === 'success') {
+                if(d && d.status === 'success') {
                     rateInput.value = d.rate; 
                     calcEditTL();
                 } 
@@ -349,12 +363,15 @@ $display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
                     var modalEl = document.getElementById('editModal');
                     var modal = bootstrap.Modal.getInstance(modalEl);
                     modal.hide();
+                    
+                    // Ana Tabloyu Yenile
                     if(window.parent && window.parent.jQuery && window.parent.jQuery('#paymentTable').length) {
                         window.parent.jQuery('#paymentTable').DataTable().ajax.reload(null, false); 
                     } else if ($('#paymentTable').length) {
                         $('#paymentTable').DataTable().ajax.reload(null, false);
                     }
-                    Swal.fire({ icon: 'success', title: 'Başarılı', text: 'Kayıt güncellendi.', timer: 1500, showConfirmButton: false });
+                    
+                    Swal.fire({ icon: 'success', title: 'Başarılı', text: res.message, timer: 1500, showConfirmButton: false });
                 } else {
                     Swal.fire('Hata', res.message, 'error');
                 }

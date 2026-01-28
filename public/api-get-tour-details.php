@@ -3,21 +3,26 @@
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
-if (!isset($_POST['tour_id'])) {
-    echo json_encode(['success' => false]);
+if (!isset($_SESSION['user_id'])) {
+    echo json_encode(['status' => 'error', 'message' => 'Unauthorized']);
     exit;
 }
 
-$tour_id = intval($_POST['tour_id']);
+$tour_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
-// Turun bağlı olduğu departmanı çekiyoruz
-$stmt = $pdo->prepare("SELECT department_id FROM tour_codes WHERE id = ?");
-$stmt->execute([$tour_id]);
-$tour = $stmt->fetch(PDO::FETCH_ASSOC);
+if ($tour_id > 0) {
+    $stmt = $pdo->prepare("SELECT department_id FROM tour_codes WHERE id = ?");
+    $stmt->execute([$tour_id]);
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
 
-echo json_encode([
-    'success' => true,
-    'department_id' => $tour['department_id'] ?? null
-]);
+    if ($result) {
+        echo json_encode(['status' => 'success', 'department_id' => $result['department_id']]);
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'Kayıt bulunamadı']);
+    }
+} else {
+    echo json_encode(['status' => 'error', 'message' => 'Geçersiz ID']);
+}
+?>
