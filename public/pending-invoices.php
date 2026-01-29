@@ -6,45 +6,45 @@ require_once '../app/functions/security.php';
 
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
-// --- SORGULAMA MANTIĞI (SADECE TAHSİLATLAR) ---
-// 1. Tip: invoice_order (Gelir/Tahsilat)
-// 2. Fatura No: BOŞ (Henüz kesilmemiş)
-// 3. Sıralama: Önce 'Fatura Kesilecek' (to_be_issued) olanlar, sonra eskiden yeniye tarih.
-
-$sql = "SELECT t.*, 
+// 1. LİSTE: FATURA KESİLECEKLER (to_be_issued) - ACİL
+// Bunlar için "Fatura Yükle" butonu çıkacak.
+$sql_issued = "SELECT t.*, 
                c.company_name, c.tax_office, c.tax_number, c.tc_number, c.address, c.city, c.country,
                tc.code as tour_code 
         FROM transactions t
         LEFT JOIN customers c ON t.customer_id = c.id
         LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id
-        WHERE t.doc_type = 'invoice_order' 
-        AND t.parent_id IS NULL 
-        AND (t.invoice_no IS NULL OR t.invoice_no = '')
-        ORDER BY 
-           CASE 
-               WHEN t.invoice_status = 'to_be_issued' THEN 1  -- En Üstte (Acil)
-               ELSE 2                                         -- Sonra Diğerleri
-           END ASC,
-           t.date ASC";
+        WHERE t.invoice_status = 'to_be_issued' 
+        AND t.doc_type = 'invoice_order'
+        AND (t.parent_id IS NULL OR t.parent_id = 0)
+        ORDER BY t.date ASC";
+$list_issued = $pdo->query($sql_issued)->fetchAll(PDO::FETCH_ASSOC);
 
-$pendings = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+// 2. LİSTE: ONAY BEKLEYENLER (waiting_approval) - BEKLEMEDE
+// Bunlar için "Onayla" butonu çıkacak (Onaylanınca üstteki listeye geçer).
+$sql_waiting = "SELECT t.*, 
+               c.company_name, 
+               tc.code as tour_code 
+        FROM transactions t
+        LEFT JOIN customers c ON t.customer_id = c.id
+        LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id
+        WHERE t.invoice_status = 'waiting_approval' 
+        AND t.doc_type = 'invoice_order'
+        AND (t.parent_id IS NULL OR t.parent_id = 0)
+        ORDER BY t.date ASC";
+$list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Fatura Kesilecek İşlemler</title>
+    <title>Fatura Takip Ekranı</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css">
     <style>
-        .clickable-id { cursor: pointer; color: #0d6efd; text-decoration: underline; font-weight: bold; }
-        .clickable-id:hover { color: #0a58ca; }
-        .info-label { font-weight: bold; color: #555; width: 120px; display: inline-block; }
-        
-        /* Satır Renklendirmeleri */
-        .row-priority { background-color: #fff3cd !important; } /* Sarı - Kesilecek */
-        .row-normal { background-color: #ffffff; } /* Beyaz - Onay Bekleyen */
+        .table-priority { border: 2px solid #ffc107; }
+        .table-priority thead { background-color: #fff3cd; }
     </style>
 </head>
 <body>
@@ -52,95 +52,139 @@ $pendings = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 
     <div class="container mt-4">
         
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
-                <h2 class="text-success"><i class="fa fa-file-invoice"></i> Fatura Kesilecek Tahsilatlar</h2>
-                <p class="text-muted">Müşterilerden alınan paralar karşılığında kesmemiz gereken faturaların listesi.</p>
+                <h2 class="text-dark"><i class="fa fa-tasks text-primary"></i> Fatura Takip Merkezi</h2>
+                <p class="text-muted">Tahsilat işlemlerinin fatura süreçlerini buradan yönetebilirsiniz.</p>
             </div>
-            <a href="payment-orders.php" class="btn btn-secondary">Tüm Liste</a>
+            <a href="payment-orders.php" class="btn btn-secondary"> <i class="fa fa-arrow-left"></i> Tüm Finans Listesi</a>
         </div>
 
-        <div class="card shadow">
-            <div class="card-body">
-                <table id="pendingTable" class="table table-hover align-middle">
+        <?php if(isset($_GET['msg']) && $_GET['msg']=='added'): ?>
+            <div class="alert alert-success alert-dismissible fade show">
+                <i class="fa fa-check-circle"></i> İşlem başarıyla eklendi.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+
+        <div class="card shadow mb-5 border-warning table-priority">
+            <div class="card-header bg-warning bg-opacity-25">
+                <h5 class="mb-0 text-dark fw-bold">
+                    <i class="fa fa-exclamation-circle text-danger"></i> Fatura Kesilmesi Gerekenler
+                    <span class="badge bg-danger rounded-pill float-end"><?php echo count($list_issued); ?> Adet</span>
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <table id="tableIssued" class="table table-hover align-middle mb-0">
                     <thead class="table-light">
                         <tr>
                             <th width="50">ID</th>
-                            <th>Durum</th>
                             <th>Tarih</th>
                             <th>Cari / Müşteri</th>
-                            <th>Tur Kodu</th>
                             <th>Açıklama</th>
                             <th class="text-end">Tutar</th>
-                            <th class="text-center">İşlem</th>
+                            <th class="text-center" width="150">İşlem</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach($pendings as $row): ?>
-                            <?php
-                                // Satır Stili ve Durum Rozeti
-                                $row_class = 'row-normal';
-                                $status_badge = '<span class="badge bg-secondary">Onay Bekliyor</span>';
-                                $btn_text = 'Faturayı Kes';
-                                $btn_class = 'btn-outline-primary';
-
-                                if ($row['invoice_status'] == 'to_be_issued') {
-                                    // ÖNCELİKLİ (Kesilecek)
-                                    $row_class = 'row-priority';
-                                    $status_badge = '<span class="badge bg-warning text-dark"><i class="fa fa-exclamation-circle"></i> Fatura Kesilecek</span>';
-                                    $btn_class = 'btn-success'; // Yeşil buton (Harekete geçirici)
-                                }
-                            ?>
-                            <tr class="<?php echo $row_class; ?>">
-                                <td>
-                                    <span class="clickable-id" onclick='openInvoiceModal(<?php echo json_encode($row); ?>)'>
-                                        #<?php echo $row['id']; ?>
-                                    </span>
-                                </td>
-                                <td><?php echo $status_badge; ?></td>
+                        <?php foreach($list_issued as $row): ?>
+                            <tr>
+                                <td class="fw-bold">#<?php echo $row['id']; ?></td>
                                 <td><?php echo date('d.m.Y', strtotime($row['date'])); ?></td>
-                                <td class="fw-bold"><?php echo guvenli_html($row['company_name']); ?></td>
-                                <td><span class="badge bg-secondary"><?php echo $row['tour_code']; ?></span></td>
+                                <td>
+                                    <div class="fw-bold"><?php echo guvenli_html($row['company_name']); ?></div>
+                                    <small class="text-muted"><?php echo $row['tour_code'] ? $row['tour_code'] : ''; ?></small>
+                                </td>
                                 <td><?php echo guvenli_html($row['description']); ?></td>
-                                <td class="text-end fw-bold text-success">
-                                    <?php echo number_format($row['amount'], 2, ',', '.'); ?> ₺
+                                <td class="text-end fw-bold text-success fs-5">
+                                    <?php echo number_format($row['amount'], 2, ',', '.'); ?> <?php echo $row['currency']; ?>
                                 </td>
                                 <td class="text-center">
-                                    <button class="btn <?php echo $btn_class; ?> btn-sm" onclick='openInvoiceModal(<?php echo json_encode($row); ?>)'>
-                                        <i class="fa fa-print"></i> <?php echo $btn_text; ?>
+                                    <button class="btn btn-success btn-sm w-100 shadow-sm" onclick='openInvoiceModal(<?php echo json_encode($row); ?>)'>
+                                        <i class="fa fa-upload"></i> Fatura Yükle
                                     </button>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+                <?php if(empty($list_issued)): ?>
+                    <div class="p-4 text-center text-muted">
+                        <i class="fa fa-check-circle fa-3x text-success mb-2"></i><br>
+                        Harika! Kesilmesi gereken bekleyen fatura yok.
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
+
+        <div class="card shadow border-secondary">
+            <div class="card-header bg-secondary bg-opacity-10">
+                <h5 class="mb-0 text-secondary fw-bold">
+                    <i class="fa fa-clock"></i> Onay Bekleyenler (Henüz Fatura Kesilmeyecek)
+                    <span class="badge bg-secondary rounded-pill float-end"><?php echo count($list_waiting); ?> Adet</span>
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <table id="tableWaiting" class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th width="50">ID</th>
+                            <th>Tarih</th>
+                            <th>Cari / Müşteri</th>
+                            <th>Açıklama</th>
+                            <th class="text-end">Tutar</th>
+                            <th class="text-center" width="150">İşlem</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach($list_waiting as $row): ?>
+                            <tr>
+                                <td class="text-muted">#<?php echo $row['id']; ?></td>
+                                <td><?php echo date('d.m.Y', strtotime($row['date'])); ?></td>
+                                <td>
+                                    <div class="fw-bold"><?php echo guvenli_html($row['company_name']); ?></div>
+                                    <small class="text-muted"><?php echo $row['tour_code'] ? $row['tour_code'] : ''; ?></small>
+                                </td>
+                                <td class="text-muted"><?php echo guvenli_html($row['description']); ?></td>
+                                <td class="text-end fw-bold text-dark">
+                                    <?php echo number_format($row['amount'], 2, ',', '.'); ?> <?php echo $row['currency']; ?>
+                                </td>
+                                <td class="text-center">
+                                    <button class="btn btn-outline-primary btn-sm w-100" onclick="approveInvoice(<?php echo $row['id']; ?>)">
+                                        <i class="fa fa-arrow-up"></i> Onayla & Taşı
+                                    </button>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php if(empty($list_waiting)): ?>
+                    <div class="p-3 text-center text-muted small">
+                        Onay bekleyen işlem yok.
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+
     </div>
 
     <div class="modal fade" id="invoiceModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header bg-success text-white">
-                    <h5 class="modal-title"><i class="fa fa-print"></i> Fatura Kesim İşlemi</h5>
+                    <h5 class="modal-title"><i class="fa fa-print"></i> Fatura Yükle</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
                     
-                    <div class="alert alert-light border shadow-sm p-3 mb-4">
-                        <h6 class="text-success fw-bold border-bottom pb-2 mb-3">
-                            <i class="fa fa-user-tag"></i> Fatura Alıcısı
-                        </h6>
+                    <div class="alert alert-light border mb-3">
                         <div class="row">
-                            <div class="col-md-7 border-end">
-                                <div class="mb-2"><span class="info-label">Ünvan:</span> <strong id="info_company" class="text-dark fs-5"></strong></div>
-                                <div class="mb-2"><span class="info-label">Vergi/TC No:</span> <span id="info_tax"></span></div>
-                                <div class="mb-2"><span class="info-label">Adres:</span> <span id="info_address" class="text-muted"></span></div>
+                            <div class="col-md-8">
+                                <strong id="info_company" class="fs-5 d-block"></strong>
+                                <span id="info_tax" class="small text-muted"></span>
                             </div>
-                            <div class="col-md-5 ps-4">
-                                <div class="mb-2"><span class="info-label">İşlem ID:</span> <span id="info_id" class="badge bg-secondary"></span></div>
-                                <div class="mb-2"><span class="info-label">Kesilecek Tutar:</span> <strong id="info_amount" class="text-success fs-4"></strong></div>
-                                <div class="mb-2"><span class="info-label">Tur Kodu:</span> <span id="info_tour" class="fw-bold"></span></div>
+                            <div class="col-md-4 text-end">
+                                <strong id="info_amount" class="text-success fs-4"></strong>
                             </div>
                         </div>
                     </div>
@@ -148,31 +192,24 @@ $pendings = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
                     <form id="invoiceForm" enctype="multipart/form-data">
                         <input type="hidden" name="id" id="trans_id">
                         
-                        <h6 class="text-secondary fw-bold border-bottom pb-2 mb-3">
-                            <i class="fa fa-edit"></i> Fatura Detayları
-                        </h6>
-
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label fw-bold">Kesilen Fatura No <span class="text-danger">*</span></label>
-                                <input type="text" name="invoice_no" class="form-control form-control-lg" required placeholder="Örn: GIB2024...">
+                                <label class="form-label fw-bold">Fatura No <span class="text-danger">*</span></label>
+                                <input type="text" name="invoice_no" class="form-control" required placeholder="Örn: GIB2024...">
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-bold">Fatura Tarihi</label>
-                                <input type="date" name="invoice_date" class="form-control form-control-lg" value="<?php echo date('Y-m-d'); ?>" required>
+                                <input type="date" name="invoice_date" class="form-control" required value="<?php echo date('Y-m-d'); ?>">
                             </div>
                         </div>
 
-                        <div class="mb-4">
-                            <label class="form-label">Fatura Dosyası (PDF/Görsel)</label>
+                        <div class="mb-3">
+                            <label class="form-label">Fatura Dosyası (PDF/Resim)</label>
                             <input type="file" name="invoice_file" class="form-control" accept=".pdf,.jpg,.png,.jpeg">
-                            <div class="form-text">Kestiğiniz faturanın PDF veya görselini buraya yükleyin.</div>
                         </div>
 
                         <div class="d-grid">
-                            <button type="submit" class="btn btn-success btn-lg shadow-sm">
-                                <i class="fa fa-check-double"></i> Kaydet ve Tamamla
-                            </button>
+                            <button type="submit" class="btn btn-success btn-lg"><i class="fa fa-save"></i> Kaydet ve Tamamla</button>
                         </div>
                     </form>
                 </div>
@@ -188,77 +225,71 @@ $pendings = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 
     <script>
         $(document).ready(function() {
-            $('#pendingTable').DataTable({
-                "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" },
-                "order": [] // SQL'deki özel sıralamayı koru
-            });
+            // İki tabloyu da DataTable yap ama sıralama özelliklerini kapat (basit liste olsun)
+            $('#tableIssued').DataTable({ "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" }, "paging": false, "info": false, "searching": false });
+            $('#tableWaiting').DataTable({ "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" }, "paging": false, "info": false });
         });
 
         var invoiceModal = new bootstrap.Modal(document.getElementById('invoiceModal'));
 
+        // Modal Açma
         function openInvoiceModal(data) {
             document.getElementById('trans_id').value = data.id;
-            
-            // Bilgi Kartı
             document.getElementById('info_company').innerText = data.company_name;
-            document.getElementById('info_id').innerText = '#' + data.id;
-            document.getElementById('info_tour').innerText = data.tour_code || '-';
+            document.getElementById('info_amount').innerText = Number(data.amount).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ' + (data.currency || 'TRY');
             
-            var formattedAmount = Number(data.amount).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ' + (data.currency || 'TRY');
-            document.getElementById('info_amount').innerText = formattedAmount;
-
-            // Vergi Bilgisi
-            var taxInfo = '';
-            if (data.tax_number) {
-                taxInfo = (data.tax_office ? data.tax_office + ' VD - ' : '') + data.tax_number;
-            } else if (data.tc_number) {
-                taxInfo = 'TC: ' + data.tc_number;
-            } else {
-                taxInfo = '<span class="text-danger">Vergi/TC Bilgisi Yok!</span>';
-            }
-            document.getElementById('info_tax').innerHTML = taxInfo;
-
-            // Adres
-            var fullAddress = [data.address, data.city, data.country].filter(Boolean).join(', ');
-            document.getElementById('info_address').innerText = fullAddress || '-';
+            var taxInfo = data.tax_number ? (data.tax_office + ' VD - ' + data.tax_number) : (data.tc_number ? 'TC: '+data.tc_number : '');
+            document.getElementById('info_tax').innerText = taxInfo;
 
             document.getElementById('invoiceForm').reset();
             invoiceModal.show();
         }
 
-        // Form Gönderimi (AJAX)
+        // Fatura Yükleme (AJAX)
         $('#invoiceForm').on('submit', function(e) {
             e.preventDefault();
             var formData = new FormData(this);
-
             $.ajax({
-                url: 'api-upload-invoice.php', // Bu dosya daha önce oluşturulmuştu, aynı mantıkla çalışır
+                url: 'api-upload-invoice.php',
                 type: 'POST',
                 data: formData,
                 contentType: false,
                 processData: false,
                 dataType: 'json',
-                success: function(response) {
-                    if(response.status === 'success') {
+                success: function(res) {
+                    if(res.status === 'success') {
                         invoiceModal.hide();
                         Swal.fire({
-                            icon: 'success',
-                            title: 'İşlem Başarılı',
-                            text: 'Fatura kaydedildi ve işlem tamamlandı.',
-                            timer: 1500,
-                            showConfirmButton: false
-                        }).then(() => {
-                            location.reload();
-                        });
+                            icon: 'success', title: 'Başarılı', text: 'Fatura işlendi, kayıt tamamlandı.', timer: 1500, showConfirmButton: false
+                        }).then(() => location.reload());
                     } else {
-                        Swal.fire('Hata', response.message, 'error');
+                        Swal.fire('Hata', res.message, 'error');
                     }
-                },
-                error: function() {
-                    Swal.fire('Hata', 'Sunucu hatası oluştu.', 'error');
                 }
             });
         });
+
+        // Onaylama İşlemi
+        function approveInvoice(id) {
+            Swal.fire({
+                title: 'Onaylıyor musunuz?',
+                text: "Bu işlem 'Fatura Kesilecekler' listesine taşınacak.",
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Evet, Onayla',
+                cancelButtonText: 'İptal'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    $.post('api-payment-actions.php', { id: id, action: 'approve_invoice' }, function(res) {
+                        if(res.status === 'success') {
+                            location.reload();
+                        } else {
+                            Swal.fire('Hata', res.message, 'error');
+                        }
+                    }, 'json');
+                }
+            });
+        }
     </script>
 </body>
 </html>

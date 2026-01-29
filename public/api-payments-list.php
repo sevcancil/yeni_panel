@@ -24,20 +24,10 @@ try {
     $order_dir = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : 'desc';
 
     $columns_map = [
-        0 => 't.id', 
-        1 => 't.payment_status',
-        2 => 't.id',             
-        3 => 't.id',             
-        4 => 't.doc_type',       
-        5 => 't.date',           
-        6 => 'd.name',           
-        7 => 'c.company_name',   
-        8 => 'tc.code',          
-        9 => 't.invoice_no',     
-        10 => 't.description',   
-        11 => 't.amount',        
-        12 => 't.original_amount', 
-        13 => 't.id'             
+        0 => 't.id', 1 => 't.payment_status', 2 => 't.id', 3 => 't.id', 
+        4 => 't.doc_type', 5 => 't.date', 6 => 'd.name', 7 => 'c.company_name', 
+        8 => 'tc.code', 9 => 't.invoice_no', 10 => 't.description', 
+        11 => 't.amount', 12 => 't.original_amount', 13 => 't.id'
     ];
 
     $order_by = $columns_map[$order_column_index] ?? 't.date';
@@ -48,7 +38,6 @@ try {
                  LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id
                  WHERE t.parent_id IS NULL "; 
 
-    // Genel Arama
     if (!empty($search_value)) {
         $sql_base .= " AND (
             c.company_name LIKE :global_search 
@@ -59,40 +48,31 @@ try {
         )";
     }
 
-    // Kolon Filtreleme
+    // Filtreler (Aynı kalıyor)
     $column_searches = [];
     if (isset($_POST['columns'])) {
         foreach ($_POST['columns'] as $colIdx => $colData) {
             $colSearchVal = $colData['search']['value'] ?? '';
-            
             if (!empty($colSearchVal)) {
                 switch ($colIdx) {
-                    case 1: // Durum (Ödeme Durumu)
+                    case 1: 
                         if ($colSearchVal == 'paid') $sql_base .= " AND t.payment_status = 'paid' ";
                         elseif ($colSearchVal == 'unpaid') $sql_base .= " AND t.payment_status = 'unpaid' ";
-                        elseif ($colSearchVal == 'partial') $sql_base .= " AND t.payment_status != 'paid' AND (SELECT SUM(amount) FROM transactions WHERE parent_id = t.id) > 0 ";
+                        elseif ($colSearchVal == 'partial') $sql_base .= " AND t.payment_status != 'paid' AND (SELECT SUM(amount) FROM transactions WHERE parent_id = t.id AND (type='payment_out' OR type='payment_in')) > 0 ";
                         break;
-                    case 2: // YENİ: İŞLEMLER (Onay, Öncelik, Kontrol)
+                    case 2:
                         if ($colSearchVal == 'approved') $sql_base .= " AND t.is_approved = 1 ";
                         elseif ($colSearchVal == 'priority') $sql_base .= " AND t.is_priority = 1 ";
                         elseif ($colSearchVal == 'control') $sql_base .= " AND t.needs_control = 1 ";
                         break;
-                    case 3: // ID
-                        $sql_base .= " AND t.id LIKE :col_id "; $column_searches[':col_id'] = "%$colSearchVal%"; break;
-                    case 4: // Belge
-                        $sql_base .= " AND t.doc_type = :col_doc "; $column_searches[':col_doc'] = $colSearchVal; break;
-                    case 5: // Tarih
-                        $sql_base .= " AND t.date LIKE :col_date "; $column_searches[':col_date'] = "%$colSearchVal%"; break;
-                    case 6: // Bölüm
-                        $sql_base .= " AND d.name LIKE :col_dept "; $column_searches[':col_dept'] = "%$colSearchVal%"; break;
-                    case 7: // Cari
-                        $sql_base .= " AND c.company_name LIKE :col_cust "; $column_searches[':col_cust'] = "%$colSearchVal%"; break;
-                    case 8: // Tur
-                        $sql_base .= " AND tc.code LIKE :col_tour "; $column_searches[':col_tour'] = "%$colSearchVal%"; break;
-                    case 9: // Fatura
-                        $sql_base .= " AND t.invoice_no LIKE :col_inv "; $column_searches[':col_inv'] = "%$colSearchVal%"; break;
-                    case 10: // Açıklama
-                        $sql_base .= " AND t.description LIKE :col_desc "; $column_searches[':col_desc'] = "%$colSearchVal%"; break;
+                    case 3: $sql_base .= " AND t.id LIKE :col_id "; $column_searches[':col_id'] = "%$colSearchVal%"; break;
+                    case 4: $sql_base .= " AND t.doc_type = :col_doc "; $column_searches[':col_doc'] = $colSearchVal; break;
+                    case 5: $sql_base .= " AND t.date LIKE :col_date "; $column_searches[':col_date'] = "%$colSearchVal%"; break;
+                    case 6: $sql_base .= " AND d.name LIKE :col_dept "; $column_searches[':col_dept'] = "%$colSearchVal%"; break;
+                    case 7: $sql_base .= " AND c.company_name LIKE :col_cust "; $column_searches[':col_cust'] = "%$colSearchVal%"; break;
+                    case 8: $sql_base .= " AND tc.code LIKE :col_tour "; $column_searches[':col_tour'] = "%$colSearchVal%"; break;
+                    case 9: $sql_base .= " AND t.invoice_no LIKE :col_inv "; $column_searches[':col_inv'] = "%$colSearchVal%"; break;
+                    case 10: $sql_base .= " AND t.description LIKE :col_desc "; $column_searches[':col_desc'] = "%$colSearchVal%"; break;
                 }
             }
         }
@@ -107,9 +87,17 @@ try {
     $stmt->execute();
     $filtered_records = $stmt->fetchColumn();
 
+    // --- KRİTİK DÜZELTME BURADA ---
+    // Alt sorguda SADECE 'payment_out' ve 'payment_in' tiplerini topluyoruz.
+    // 'invoice' veya 'invoice_log' tiplerini toplama dahil ETMİYORUZ.
+    
     $sql = "SELECT t.*, 
-            (SELECT SUM(amount) FROM transactions WHERE parent_id = t.id) as total_paid,
-            d.name as dep_name, c.company_name, c.id as cust_id, tc.code as tour_code, tc.id as tour_id 
+            (SELECT COALESCE(SUM(amount),0) FROM transactions 
+             WHERE parent_id = t.id 
+             AND (type = 'payment_out' OR type = 'payment_in') 
+            ) as total_paid,
+            d.name as dep_name, c.company_name, c.id as cust_id, tc.code as tour_code, tc.id as tour_id,
+            c.tax_number, c.tc_number, c.tax_office, c.address, c.city, c.country
             " . $sql_base . " 
             ORDER BY $order_by $order_dir 
             LIMIT $start, $length";
@@ -127,60 +115,69 @@ try {
         $paid = (float)$row['total_paid'];
         $remaining = $amount - $paid;
 
+        // Renklendirme
+        $row_class = '';
+        if ($remaining <= 0.05) {
+            $row_class = 'table-light text-muted';
+        } else {
+            if ($row['doc_type'] == 'payment_order') {
+                $row_class = 'table-danger bg-opacity-10'; // Gider - Kırmızı
+            } elseif ($row['doc_type'] == 'invoice_order') {
+                $row_class = 'table-success bg-opacity-10'; // Gelir - Yeşil
+            }
+            if (date('Y-m-d', strtotime($row['date'])) < date('Y-m-d')) {
+                $row_class .= ' border-start border-3 border-dark';
+            }
+        }
+
         // Tutar Görünümü
         $main_amount_display = number_format($amount, 2, ',', '.') . ' ₺';
-        
         if ($paid > 0) {
             $paid_display = number_format($paid, 2, ',', '.') . ' ₺';
             $rem_display  = number_format($remaining, 2, ',', '.') . ' ₺';
             $paid_icon = ($remaining <= 0.05) ? '<i class="fa fa-check-double"></i>' : '<i class="fa fa-check"></i>';
             $rem_html = ($remaining > 0.05) ? '<br><small class="text-danger fw-bold">Kalan: ' . $rem_display . '</small>' : '';
-
-            $tl_amt_html = '<div class="d-flex flex-column align-items-end">
-                                <span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span>
-                                <small class="text-success" style="font-size:0.75rem;">' . $paid_icon . ' Ödenen: ' . $paid_display . '</small>
-                                ' . $rem_html . '
-                            </div>';
+            $tl_amt_html = '<div class="d-flex flex-column align-items-end"><span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span><small class="text-success" style="font-size:0.75rem;">' . $paid_icon . ' Ödenen: ' . $paid_display . '</small>' . $rem_html . '</div>';
         } else {
             $tl_amt_html = '<span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span>';
         }
 
-        // Durum
-        $today = date('Y-m-d');
-        $trans_date = date('Y-m-d', strtotime($row['date']));
-        $row_class = '';
-
+        // Durum Badge (Fatura Kesildi Mantığı Eklendi)
         if ($remaining <= 0.05) {
-            $status_text = 'Tamamlandı';
-            $status_class = 'bg-primary'; 
-            $row_class = 'table-light text-muted';
+            $status_badge = '<span class="badge bg-primary d-block">Tamamlandı</span>';
         } else {
             if ($paid > 0) {
-                $status_text = 'Kısmi'; 
+                $status_text = 'Kısmi Ödendi'; 
                 $status_class = 'bg-info text-dark';
             } else {
-                $status_text = 'Planlandı';
-                $status_class = 'bg-secondary';
+                // Eğer hiç ödeme yoksa ama fatura numarası girilmişse
+                if (!empty($row['invoice_no'])) {
+                    $status_text = 'Faturalandı';
+                    $status_class = 'bg-warning text-dark'; // Sarı
+                } else {
+                    $status_text = 'Planlandı';
+                    $status_class = 'bg-secondary';
+                }
             }
-
-            if ($trans_date < $today) {
-                $row_class = 'table-danger border-danger'; 
-                $status_text .= ' <br><strong class="text-danger blink">(Gecikmiş)</strong>';
-            } elseif ($trans_date == $today) {
-                $row_class = 'table-warning border-warning fw-bold';
-                $status_text .= ' <br><strong class="text-dark">(Bugün)</strong>';
-            } else {
-                $row_class = 'table-success bg-opacity-10';
-            }
+            $status_badge = '<span class="badge '.$status_class.' d-block">'.$status_text.'</span>';
         }
-        $status_badge = '<span class="badge '.$status_class.' d-block">'.$status_text.'</span>';
 
-        // İşlemler Butonları (DÜZELTİLDİ: Sınıflar Eklendi)
+        // Butonlar
         $app_active = $row['is_approved'] ? 'active approval' : '';
         $prio_active = $row['is_priority'] ? 'active priority' : '';
         $cont_active = $row['needs_control'] ? 'active control' : '';
 
         $btn_history = '<i class="fa fa-history text-info toggle-btn" onclick="openLogModal('.$row['id'].')" title="Geçmiş"></i>';
+        
+        $btn_invoice = '';
+        if ($row['doc_type'] == 'payment_order') {
+            $inv_icon_class = empty($row['invoice_no']) ? 'text-primary' : 'text-success';
+            $inv_title = empty($row['invoice_no']) ? 'Fatura Girişi Yap' : 'Faturayı Düzenle';
+            // JSON Encode ile row verisini JS fonksiyonuna gönderiyoruz
+            // Tırnak hatalarını önlemek için htmlspecialchars önemlidir
+            $row_json = htmlspecialchars(json_encode($row), ENT_QUOTES, 'UTF-8');
+            $btn_invoice = "<i class='fa fa-file-invoice $inv_icon_class action-icon' onclick='openInvoiceModal($row_json)' title='$inv_title'></i>";
+        }
         
         $btn_delete = '';
         if ($can_delete) {
@@ -188,7 +185,7 @@ try {
         }
 
         if ($is_admin) {
-            $btn_class = 'action-icon'; // Yeni CSS sınıfı
+            $btn_class = 'action-icon';
             $act_approve = 'onclick="toggleStatus('.$row['id'].', \'approve\', this)"';
             $act_priority = 'onclick="toggleStatus('.$row['id'].', \'priority\', this)"';
             $act_check = 'onclick="toggleStatus('.$row['id'].', \'check\', this)"';
@@ -200,14 +197,17 @@ try {
         $actions = '
         <div class="d-flex justify-content-center gap-3 align-items-center">
             ' . $btn_history . '
+            ' . $btn_invoice . ' 
             <i class="fa fa-check-circle '.$btn_class.' '.$app_active.'" '.$act_approve.' title="Onay"></i>
             <i class="fa fa-star '.$btn_class.' '.$prio_active.'" '.$act_priority.' title="Öncelik"></i>
             <i class="fa fa-search '.$btn_class.' '.$cont_active.'" '.$act_check.' title="Kontrol"></i>
             ' . $btn_delete . '
         </div>';
 
-        $doc_text = ($row['doc_type'] == 'invoice_order') ? 'Fatura' : 'Ödeme';
-        $doc_badge = '<span class="badge bg-secondary">'.$doc_text.'</span>';
+        $doc_badge = ($row['doc_type'] == 'invoice_order') 
+            ? '<span class="badge bg-success">GELİR</span>' 
+            : '<span class="badge bg-danger">GİDER</span>';
+
         $org_amt = ($row['currency'] != 'TRY') ? number_format($row['original_amount'], 2, ',', '.') . ' ' . $row['currency'] : '-';
 
         $checkbox_html = '<div class="form-check d-flex justify-content-center align-items-center gap-2">
@@ -219,21 +219,13 @@ try {
         $tour_link = !empty($row['tour_code']) ? '<a href="projects.php?id='.$row['tour_id'].'" class="text-decoration-none badge bg-info text-dark" target="_blank">'.$row['tour_code'].'</a>' : '-';
 
         $response_data[] = [
-            '', // 0
-            $status_badge, // 1
-            $actions, // 2
-            $checkbox_html, // 3
-            $row['doc_type'], // 4
-            date('d.m.Y', strtotime($row['date'])), // 5
-            $row['dep_name'], // 6
-            $cari_link, // 7
-            $tour_link, // 8
-            guvenli_html($row['invoice_no']), // 9
-            guvenli_html($row['description']), // 10
-            $tl_amt_html, // 11
-            $org_amt, // 12
-            '<button class="btn btn-sm btn-primary" onclick="openEditModal('.$row['id'].')"><i class="fa fa-edit"></i></button>', // 13
-            "DT_RowClass" => $row_class 
+            '', $status_badge, $actions, $checkbox_html, $doc_badge,
+            date('d.m.Y', strtotime($row['date'])),
+            $row['dep_name'], $cari_link, $tour_link,
+            guvenli_html($row['invoice_no']), guvenli_html($row['description']),
+            $tl_amt_html, $org_amt,
+            '<button class="btn btn-sm btn-primary" onclick="openEditModal('.$row['id'].')"><i class="fa fa-edit"></i></button>',
+            "DT_RowClass" => $row_class
         ];
     }
 

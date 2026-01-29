@@ -4,137 +4,126 @@ session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
 
-error_reporting(0);
-ini_set('display_errors', 0);
+if (!isset($_SESSION['user_id'])) exit;
 
 $parent_id = isset($_GET['parent_id']) ? (int)$_GET['parent_id'] : 0;
-if($parent_id == 0) exit('<div class="alert alert-danger">Hata.</div>');
 
-// Ana İşlemi Çek
-$stmt_p = $pdo->prepare("SELECT invoice_no, type, currency FROM transactions WHERE id = ?");
-$stmt_p->execute([$parent_id]);
-$parent = $stmt_p->fetch(PDO::FETCH_ASSOC);
+if (!$parent_id) { echo "ID Hatası"; exit; }
 
-$can_manage_finance = (isset($_SESSION['role']) && $_SESSION['role'] == 'admin') || (function_exists('has_permission') && has_permission('manage_finance'));
+// 1. ÖNCE ANA İŞLEMİ (PARENT) ÇEK (Fatura butonu için gerekli)
+$stmtParent = $pdo->prepare("SELECT t.*, c.company_name FROM transactions t LEFT JOIN customers c ON t.customer_id = c.id WHERE t.id = ?");
+$stmtParent->execute([$parent_id]);
+$parent = $stmtParent->fetch(PDO::FETCH_ASSOC);
 
-try {
-    // GÜNCELLEME: Hem Ödeme Yöntemlerini hem Tahsilat Kanallarını JOIN yapıyoruz
-    $sql = "SELECT t.*, 
-            cc.title as tahsilat_kanali,
-            pm.title as odeme_kanali
-            FROM transactions t 
-            LEFT JOIN collection_channels cc ON t.collection_channel_id = cc.id
-            LEFT JOIN payment_methods pm ON t.payment_method_id = pm.id
-            WHERE t.parent_id = ? 
-            ORDER BY t.date DESC";
-            
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([$parent_id]);
-    $children = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// Parent verisini JS'e göndermek için JSON'a çevir
+$parent_json = htmlspecialchars(json_encode($parent), ENT_QUOTES, 'UTF-8');
 
-} catch (PDOException $e) {
-    exit('<div class="alert alert-danger">' . $e->getMessage() . '</div>');
-}
+// 2. BAĞLI ALT İŞLEMLERİ ÇEK
+$sql = "SELECT t.*, u.full_name as user_name,
+        pm.title as method_name, cc.title as channel_name
+        FROM transactions t
+        LEFT JOIN users u ON t.created_by = u.id
+        LEFT JOIN payment_methods pm ON t.payment_method_id = pm.id
+        LEFT JOIN collection_channels cc ON t.collection_channel_id = cc.id
+        WHERE t.parent_id = ?
+        ORDER BY t.date DESC, t.id DESC";
+
+$stmt = $pdo->prepare($sql);
+$stmt->execute([$parent_id]);
+$children = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// İKON BELİRLEME (Gider/Gelir için)
+$invoice_btn_text = ($parent['doc_type'] == 'invoice_order') ? 'Fatura Kes/Yükle' : 'Gelen Faturayı İşle';
+$invoice_btn_class = empty($parent['invoice_no']) ? 'btn-outline-dark' : 'btn-success text-white';
+$invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check-double';
+
 ?>
 
-<div class="p-3 border-top bg-light">
-    
-    <?php if(empty($parent['invoice_no'])): ?>
-        <div class="alert alert-warning d-flex justify-content-between align-items-center py-2 px-3 mb-3 shadow-sm">
-            <div>
-                <i class="fa fa-exclamation-triangle me-2"></i> 
-                <strong>Bu işlemin faturası henüz girilmemiş.</strong>
-            </div>
-            <?php if($can_manage_finance): ?>
-                <button onclick="window.parent.openEditModal(<?php echo $parent_id; ?>)" class="btn btn-sm btn-warning fw-bold text-dark">
-                    <i class="fa fa-file-invoice"></i> Faturayı İşle / Düzenle
-                </button>
-            <?php endif; ?>
-        </div>
-    <?php endif; ?>
-
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="m-0 text-primary fw-bold">
-            <i class="fa fa-history me-1"></i> Ödeme ve Tahsilat Hareketleri
-        </h6>
-        
-        <?php if($can_manage_finance): ?>
-            <a href="transaction-add-child.php?parent_id=<?php echo $parent_id; ?>" class="btn btn-sm btn-outline-primary shadow-sm">
-                <i class="fa fa-plus-circle"></i> Yeni Ödeme / Tahsilat Ekle
-            </a>
-        <?php endif; ?>
-    </div>
-
-    <div class="table-responsive shadow-sm">
-        <table class="table table-sm table-bordered bg-white mb-0 align-middle small">
+<div class="table-responsive">
+    <?php if(empty($children)): ?>
+        <div class="alert alert-warning m-0 p-2 text-center small"><i class="fa fa-info-circle"></i> Henüz bir işlem hareketi (ödeme/fatura) girilmemiş.</div>
+    <?php else: ?>
+        <table class="table table-sm table-bordered mb-0 bg-white">
             <thead class="table-light">
                 <tr>
-                    <th width="100">Tarih</th>
-                    <th width="110">Yön</th>
-                    <th>Belge Türü</th>
-                    <th>Kasa / Kanal</th> 
-                    <th>Açıklama</th>
-                    <th width="50" class="text-center">Dosya</th>
-                    <th class="text-end" width="120">Tutar</th>
+                    <th>Tarih</th>
+                    <th>İşlem Türü</th>
+                    <th>Açıklama / Belge</th>
+                    <th>Kasa/Banka</th>
+                    <th class="text-end">Tutar</th>
+                    <th>Kullanıcı</th>
+                    <th width="50">Dosya</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if(count($children) > 0): ?>
-                    <?php foreach($children as $c): ?>
-                        <tr>
-                            <td class="text-center"><?php echo date('d.m.Y', strtotime($c['date'])); ?></td>
-                            <td class="text-center">
-                                <?php if($c['type'] == 'payment_out'): ?>
-                                    <span class="badge bg-danger bg-opacity-10 text-danger border border-danger w-100">
-                                        <i class="fa fa-arrow-up"></i> Çıkış
-                                    </span>
-                                <?php elseif($c['type'] == 'payment_in'): ?>
-                                    <span class="badge bg-success bg-opacity-10 text-success border border-success w-100">
-                                        <i class="fa fa-arrow-down"></i> Giriş
-                                    </span>
-                                <?php else: ?>
-                                    <span class="badge bg-secondary">-</span>
-                                <?php endif; ?>
-                            </td>
-                            <td class="fw-bold text-dark">
-                                <?php echo !empty($c['document_type']) ? guvenli_html($c['document_type']) : '-'; ?>
-                            </td>
-                            <td>
-                                <?php 
-                                    if(!empty($c['tahsilat_kanali'])) echo '<span class="badge bg-info text-dark">'.guvenli_html($c['tahsilat_kanali']).'</span>';
-                                    elseif(!empty($c['odeme_kanali'])) echo '<span class="badge bg-primary">'.guvenli_html($c['odeme_kanali']).'</span>';
-                                    else echo '<span class="text-muted">-</span>';
-                                ?>
-                            </td>
-                            <td class="text-muted">
-                                <?php echo guvenli_html($c['description']); ?>
-                            </td>
-                            <td class="text-center">
-                                <?php if(!empty($c['file_path'])): ?>
-                                    <a href="../storage/<?php echo $c['file_path']; ?>" target="_blank" class="btn btn-xs btn-outline-dark" title="Görüntüle">
-                                        <i class="fa fa-paperclip"></i>
-                                    </a>
-                                <?php else: ?>
-                                    <span class="text-muted">-</span>
-                                <?php endif; ?>
-                            </td>
-                            <td class="text-end fw-bold">
-                                <?php 
-                                    // Eğer dövizli ödeme yapıldıysa onu da gösterelim
-                                    if($c['currency'] != 'TRY' && $c['currency'] != $parent['currency']) {
-                                        echo number_format($c['original_amount'], 2) . ' ' . $c['currency'];
-                                        echo '<br><small class="text-muted">('.number_format($c['amount'], 2).' TL)</small>';
-                                    } else {
-                                        echo number_format($c['amount'], 2, ',', '.') . ' ₺';
-                                    }
-                                ?>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr><td colspan="7" class="text-center text-muted py-3">Henüz hareket girilmedi.</td></tr>
-                <?php endif; ?>
+                <?php foreach ($children as $child): 
+                    $style_class = ""; $icon = ""; $type_text = "";
+
+                    if ($child['type'] == 'payment_out') {
+                        $style_class = "table-danger bg-opacity-10"; 
+                        $icon = '<i class="fa fa-arrow-up text-danger"></i>';
+                        $type_text = "Ödeme Çıkışı";
+                    } elseif ($child['type'] == 'payment_in') {
+                        $style_class = "table-success bg-opacity-10"; 
+                        $icon = '<i class="fa fa-arrow-down text-success"></i>';
+                        $type_text = "Tahsilat Girişi";
+                    } elseif ($child['type'] == 'invoice_log') {
+                        $style_class = "table-info bg-opacity-10"; 
+                        $icon = '<i class="fa fa-file-invoice text-primary"></i>';
+                        $type_text = "Fatura İşlendi";
+                    } else {
+                        $type_text = "İşlem";
+                    }
+
+                    $file_link = '-';
+                    if (!empty($child['file_path'])) {
+                        $file_link = '<a href="../storage/'.$child['file_path'].'" target="_blank" class="btn btn-xs btn-outline-secondary" title="Dosyayı Gör"><i class="fa fa-paperclip"></i></a>';
+                    }
+                ?>
+                <tr class="<?php echo $style_class; ?>">
+                    <td><?php echo date('d.m.Y', strtotime($child['date'])); ?></td>
+                    <td><?php echo $icon . ' ' . $type_text; ?></td>
+                    <td>
+                        <?php echo guvenli_html($child['description']); ?>
+                        <?php if(!empty($child['invoice_no'])): ?>
+                            <br><small class="fw-bold text-dark">Belge No: <?php echo guvenli_html($child['invoice_no']); ?></small>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?php 
+                            if ($child['method_name']) echo $child['method_name'];
+                            elseif ($child['channel_name']) echo $child['channel_name'];
+                            else echo '-';
+                        ?>
+                    </td>
+                    <td class="text-end fw-bold">
+                        <?php 
+                            // Fatura logu ise parantez içinde göster değilse normal göster
+                            if ($child['type'] == 'invoice_log') {
+                                // original_amount yoksa amount kullan (API'de düzelttik ama eski kayıtlar için önlem)
+                                $amt = $child['original_amount'] > 0 ? $child['original_amount'] : $child['amount'];
+                                echo '<span class="text-muted">(' . number_format($amt, 2, ',', '.') . ' ' . $child['currency'] . ')</span>';
+                            } else {
+                                echo number_format($child['amount'], 2, ',', '.') . ' ' . $child['currency'];
+                            }
+                        ?>
+                    </td>
+                    <td class="small text-muted"><?php echo guvenli_html($child['user_name']); ?></td>
+                    <td class="text-center"><?php echo $file_link; ?></td>
+                </tr>
+                <?php endforeach; ?>
             </tbody>
         </table>
+    <?php endif; ?>
+    
+    <div class="d-flex justify-content-end mt-2 gap-2">
+        
+        <button class="btn btn-sm <?php echo $invoice_btn_class; ?> shadow-sm" onclick='openInvoiceModal(<?php echo $parent_json; ?>)'>
+            <i class="fa <?php echo $invoice_btn_icon; ?>"></i> <?php echo $invoice_btn_text; ?>
+        </button>
+
+        <a href="transaction-add-child.php?parent_id=<?php echo $parent_id; ?>" class="btn btn-sm btn-primary shadow-sm">
+            <i class="fa fa-plus"></i> Yeni Hareket Ekle
+        </a>
     </div>
 </div>
