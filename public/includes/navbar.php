@@ -231,6 +231,12 @@ if (file_exists($alerts_file)) {
                         <i class="fa fa-users-gear"></i> <span>Kullanıcılar</span>
                     </a>
                 </li>
+
+                <li>
+                    <a href="logs.php" class="nav-link text-danger <?php echo basename($_SERVER['PHP_SELF']) == 'logs.php' ? 'active' : ''; ?>" title="Loglar">
+                        <i class="fa fa-users-gear"></i> <span>Logs</span>
+                    </a>
+                </li>
             <?php endif; ?>
         </ul>
         

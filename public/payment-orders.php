@@ -19,20 +19,24 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
         .dt-control { cursor: pointer; text-align: center; vertical-align: middle; color: #0d6efd; }
         .dt-control:hover { color: #0a58ca; }
         
-        .action-icon { 
-            color: #d1d1d1; transition: all 0.2s ease-in-out; font-size: 1.2rem; cursor: pointer;
-        }
+        .action-icon { color: #d1d1d1; transition: all 0.2s ease-in-out; font-size: 1.2rem; cursor: pointer; }
         .action-icon:hover { transform: scale(1.3); color: #888; }
         
         .action-icon.active.approval { color: #198754 !important; }
         .action-icon.active.priority { color: #dc3545 !important; } 
         .action-icon.active.control  { color: #fd7e14 !important; }
         
+        .fa-file-invoice.text-primary { color: #0d6efd !important; } 
+        .fa-file-invoice.text-success { color: #198754 !important; } 
+
         .disabled-btn { opacity: 0.2; cursor: not-allowed; pointer-events: none; }
         #selection-bar { position: fixed; bottom: -100px; left: 0; width: 100%; background-color: #343a40; color: white; padding: 15px 40px; z-index: 1050; transition: bottom 0.3s; display: flex; justify-content: space-between; align-items: center; }
         #selection-bar.show { bottom: 0; }
         th { font-size: 0.9rem; white-space: nowrap; }
         td { font-size: 0.9rem; vertical-align: middle; }
+        
+        /* Tarih Aralığı Stili */
+        .date-range-container input { font-size: 0.75rem; padding: 2px 4px; }
     </style>
 </head>
 <body>
@@ -63,7 +67,14 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                                 <td><select class="filter-select" data-col-index="2"><option value="">Filtrele...</option><option value="approved">Onaylılar</option><option value="priority">Öncelikliler</option><option value="control">Kontrol Gereken</option></select></td> 
                                 <td><input type="text" class="filter-input" placeholder="ID" data-col-index="3"></td>
                                 <td><select class="filter-select" data-col-index="4"><option value="">Tümü</option><option value="invoice_order">Fatura</option><option value="payment_order">Ödeme</option></select></td>
-                                <td><input type="text" class="filter-input" placeholder="Tarih" data-col-index="5"></td>
+                                
+                                <td>
+                                    <div class="d-flex flex-column gap-1 date-range-container">
+                                        <input type="date" class="form-control form-control-sm date-filter" id="date_start" placeholder="Başlangıç" title="Başlangıç Tarihi">
+                                        <input type="date" class="form-control form-control-sm date-filter" id="date_end" placeholder="Bitiş" title="Bitiş Tarihi">
+                                    </div>
+                                </td>
+
                                 <td><input type="text" class="filter-input" placeholder="Bölüm" data-col-index="6"></td>
                                 <td><input type="text" class="filter-input" placeholder="Cari Ara..." data-col-index="7"></td>
                                 <td><input type="text" class="filter-input" placeholder="Tur Kodu" data-col-index="8"></td>
@@ -90,7 +101,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     </div>
 
     <div class="modal fade" id="editModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">İşlem Düzenle</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="editModalBody"></div></div></div></div>
-    
     <div class="modal fade" id="logModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-info text-white"><h5 class="modal-title">İşlem Tarihçesi</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="logModalBody"></div></div></div></div>
 
     <div class="modal fade" id="invoiceModal" tabindex="-1">
@@ -147,6 +157,8 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" },
                 initComplete: function () {
                     var api = this.api();
+                    
+                    // Standart Text Filtreleri
                     $('.filter-input, .filter-select').each(function () {
                         var $el = $(this);
                         $el.off('keyup change').on('keyup change', function (e) {
@@ -154,6 +166,19 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                                 api.column($el.data('col-index')).search(this.value).draw();
                             }
                         });
+                    });
+
+                    // TARİH ARALIĞI FİLTRESİ
+                    $('.date-filter').on('change', function() {
+                        var start = $('#date_start').val();
+                        var end = $('#date_end').val();
+                        
+                        // İki tarihi '|' ile birleştirip gönderiyoruz.
+                        // Backend bu formatı ayırıp (explode) BETWEEN sorgusu yapacak.
+                        var searchVal = start + '|' + end;
+                        
+                        // 5. Kolon (Tarih) için arama yap
+                        api.column(5).search(searchVal).draw();
                     });
                 }
             });
@@ -167,19 +192,15 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // --- FATURA MODAL FONKSİYONLARI ---
+        // --- FATURA MODAL ---
         var invoiceModal = new bootstrap.Modal(document.getElementById('invoiceModal'));
 
         function openInvoiceModal(data) {
             document.getElementById('inv_trans_id').value = data.id;
             document.getElementById('inv_company').innerText = $(data.company_name).text() || data.company_name;
             document.getElementById('inv_id').innerText = '#' + data.id;
-            
-            var tempDiv = document.createElement("div");
-            tempDiv.innerHTML = data.amount;
-            var amountText = tempDiv.textContent || tempDiv.innerText || "";
-            document.getElementById('inv_amount').innerText = amountText;
-
+            var tempDiv = document.createElement("div"); tempDiv.innerHTML = data.amount;
+            document.getElementById('inv_amount').innerText = tempDiv.textContent || tempDiv.innerText || "";
             document.getElementById('inv_no_input').value = data.invoice_no || '';
             invoiceModal.show();
         }
@@ -193,7 +214,7 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 success: function(res) {
                     if(res.status === 'success') {
                         invoiceModal.hide();
-                        Swal.fire({ icon: 'success', title: 'Başarılı', text: 'Fatura kaydedildi ve detaylara eklendi.', timer: 1500, showConfirmButton: false }).then(() => {
+                        Swal.fire({ icon: 'success', title: 'Başarılı', text: 'Fatura kaydedildi.', timer: 1500, showConfirmButton: false }).then(() => {
                             $('#paymentTable').DataTable().ajax.reload(null, false);
                         });
                     } else {
@@ -203,7 +224,7 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // --- DİĞER FONKSİYONLAR ---
+        // Diğer fonksiyonlar
         function deleteTransaction(id) {
             Swal.fire({ title: 'Silinsin mi?', text: "Bu işlem geri alınamaz!", icon: 'warning', showCancelButton: true, confirmButtonText: 'Evet, Sil' }).then((result) => {
                 if (result.isConfirmed) {
@@ -214,7 +235,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 }
             });
         }
-
         function toggleStatus(id, type, element) {
             $.post('api-payment-actions.php', { id: id, action: 'toggle_' + type }, function(res) {
                 if(res.status === 'success') { 
@@ -224,16 +244,8 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 }
             }, 'json');
         }
-
-        function openEditModal(id) {
-            new bootstrap.Modal(document.getElementById('editModal')).show();
-            $('#editModalBody').load('transaction-edit.php?id=' + id);
-        }
-
-        function openLogModal(id) {
-            new bootstrap.Modal(document.getElementById('logModal')).show();
-            $('#logModalBody').load('get-log-history.php?id=' + id);
-        }
+        function openEditModal(id) { new bootstrap.Modal(document.getElementById('editModal')).show(); $('#editModalBody').load('transaction-edit.php?id=' + id); }
+        function openLogModal(id) { new bootstrap.Modal(document.getElementById('logModal')).show(); $('#logModalBody').load('get-log-history.php?id=' + id); }
     </script>
 </body>
 </html>

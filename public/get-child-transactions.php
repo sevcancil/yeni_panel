@@ -10,7 +10,7 @@ $parent_id = isset($_GET['parent_id']) ? (int)$_GET['parent_id'] : 0;
 
 if (!$parent_id) { echo "ID Hatası"; exit; }
 
-// 1. ÖNCE ANA İŞLEMİ (PARENT) ÇEK (Fatura butonu için gerekli)
+// 1. ÖNCE ANA İŞLEMİ (PARENT) ÇEK (Fatura butonu ve İptal durumu için gerekli)
 $stmtParent = $pdo->prepare("SELECT t.*, c.company_name FROM transactions t LEFT JOIN customers c ON t.customer_id = c.id WHERE t.id = ?");
 $stmtParent->execute([$parent_id]);
 $parent = $stmtParent->fetch(PDO::FETCH_ASSOC);
@@ -37,6 +37,10 @@ $invoice_btn_text = ($parent['doc_type'] == 'invoice_order') ? 'Fatura Kes/Yükl
 $invoice_btn_class = empty($parent['invoice_no']) ? 'btn-outline-dark' : 'btn-success text-white';
 $invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check-double';
 
+// --- İPTAL UYARISI (ANA İŞLEM SİLİNMİŞSE) ---
+if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
+    echo '<div class="alert alert-danger fw-bold text-center m-2"><i class="fa fa-ban"></i> BU İŞLEM İPTAL EDİLMİŞTİR!</div>';
+}
 ?>
 
 <div class="table-responsive">
@@ -58,7 +62,9 @@ $invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check
             <tbody>
                 <?php foreach ($children as $child): 
                     $style_class = ""; $icon = ""; $type_text = "";
+                    $is_child_deleted = isset($child['is_deleted']) && $child['is_deleted'] == 1;
 
+                    // TİP BELİRLEME
                     if ($child['type'] == 'payment_out') {
                         $style_class = "table-danger bg-opacity-10"; 
                         $icon = '<i class="fa fa-arrow-up text-danger"></i>';
@@ -67,12 +73,19 @@ $invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check
                         $style_class = "table-success bg-opacity-10"; 
                         $icon = '<i class="fa fa-arrow-down text-success"></i>';
                         $type_text = "Tahsilat Girişi";
-                    } elseif ($child['type'] == 'invoice_log') {
+                    } elseif ($child['type'] == 'invoice' || $child['type'] == 'invoice_log') {
                         $style_class = "table-info bg-opacity-10"; 
                         $icon = '<i class="fa fa-file-invoice text-primary"></i>';
                         $type_text = "Fatura İşlendi";
                     } else {
                         $type_text = "İşlem";
+                    }
+
+                    // SİLİNMİŞSE STİLİ EZ (Üzerini çiz ve kırmızı yap)
+                    if ($is_child_deleted) {
+                        $style_class = "table-secondary text-decoration-line-through text-muted";
+                        $type_text .= " (İPTAL)";
+                        $icon = '<i class="fa fa-ban text-danger"></i>';
                     }
 
                     $file_link = '-';
@@ -98,10 +111,10 @@ $invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check
                     </td>
                     <td class="text-end fw-bold">
                         <?php 
-                            // Fatura logu ise parantez içinde göster değilse normal göster
-                            if ($child['type'] == 'invoice_log') {
-                                // original_amount yoksa amount kullan (API'de düzelttik ama eski kayıtlar için önlem)
-                                $amt = $child['original_amount'] > 0 ? $child['original_amount'] : $child['amount'];
+                            // Fatura logu ise veya işlem silinmişse parantez içinde göster
+                            if ($child['type'] == 'invoice_log' || $is_child_deleted) {
+                                // original_amount yoksa amount kullan
+                                $amt = ($child['original_amount'] > 0) ? $child['original_amount'] : $child['amount'];
                                 echo '<span class="text-muted">(' . number_format($amt, 2, ',', '.') . ' ' . $child['currency'] . ')</span>';
                             } else {
                                 echo number_format($child['amount'], 2, ',', '.') . ' ' . $child['currency'];
@@ -116,6 +129,7 @@ $invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check
         </table>
     <?php endif; ?>
     
+    <?php if(!isset($parent['is_deleted']) || $parent['is_deleted'] == 0): ?>
     <div class="d-flex justify-content-end mt-2 gap-2">
         
         <button class="btn btn-sm <?php echo $invoice_btn_class; ?> shadow-sm" onclick='openInvoiceModal(<?php echo $parent_json; ?>)'>
@@ -126,4 +140,5 @@ $invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check
             <i class="fa fa-plus"></i> Yeni Hareket Ekle
         </a>
     </div>
+    <?php endif; ?>
 </div>

@@ -8,49 +8,61 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
 $parent_id = isset($_GET['parent_id']) ? (int)$_GET['parent_id'] : 0;
 
-// 1. ANA İŞLEMİ ÇEK
-$stmt = $pdo->prepare("SELECT * FROM transactions WHERE id = ?");
+// 1. ANA İŞLEMİ VE DETAYLARINI ÇEK
+$sql = "SELECT t.*, 
+        c.company_name, 
+        tc.code as tour_code, 
+        d.name as department_name
+        FROM transactions t
+        LEFT JOIN customers c ON t.customer_id = c.id
+        LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id
+        LEFT JOIN departments d ON t.department_id = d.id
+        WHERE t.id = ?";
+
+$stmt = $pdo->prepare($sql);
 $stmt->execute([$parent_id]);
 $parent = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$parent) die('<div class="alert alert-danger m-4">Ana işlem bulunamadı.</div>');
 
-// 2. BAKİYE HESAPLA (KRİTİK DÜZELTME BURADA)
-// Sadece Gerçek Ödeme/Tahsilatları topla. 'invoice' tipli kayıtları toplama dahil etme!
-$stmt = $pdo->prepare("SELECT SUM(amount) FROM transactions WHERE parent_id = ? AND (type = 'payment_out' OR type = 'payment_in')");
+// 2. MÜŞTERİ BANKA BİLGİLERİNİ ÇEK
+$stmtBanks = $pdo->prepare("SELECT * FROM customer_banks WHERE customer_id = ?");
+$stmtBanks->execute([$parent['customer_id']]);
+$customer_banks = $stmtBanks->fetchAll(PDO::FETCH_ASSOC);
+
+// 3. BAKİYE HESAPLA
+$stmt = $pdo->prepare("SELECT SUM(amount) FROM transactions WHERE parent_id = ? AND (type = 'payment_out' OR type = 'payment_in') AND is_deleted = 0");
 $stmt->execute([$parent_id]);
 $total_paid = (float)$stmt->fetchColumn();
 
 // Kalan Bakiye
 $remaining = $parent['amount'] - $total_paid; 
 
-// Eğer kalan 0.01'den küçükse ödeme yaptırma (Ama artık fatura girince burası etkilenmeyecek)
 if ($remaining <= 0.01) {
-    die('<div class="alert alert-success m-4">Bu işlemin ödemesi/tahsilatı tamamen tamamlanmıştır.<br><a href="payment-orders.php" class="btn btn-primary mt-2">Listeye Dön</a></div>');
+    die('<div class="alert alert-success m-4 text-center"><h3><i class="fa fa-check-circle"></i> Ödeme Tamamlandı</h3>Bu işlemin ödemesi/tahsilatı tamamen tamamlanmıştır.<br><a href="payment-orders.php" class="btn btn-primary mt-3">Listeye Dön</a></div>');
 }
 
-// 3. AYARLAR
-$doc_options = [];
-$channels = []; 
-$channel_label = "";
-$channel_db_col = "";
-$amount_label = "Ödenen Tutar"; 
-$page_title = "Ödeme Girişi";
+// 4. AYARLAR
+$doc_options = []; $channels = []; $channel_label = ""; $channel_db_col = ""; $amount_label = "Ödenen Tutar"; $page_title = "Ödeme Girişi"; $bg_class = "bg-danger text-white";
 
 if ($parent['type'] == 'credit') {
+    // TAHSİLAT
     $doc_options = ['Dekont', 'Slip/Pos', 'Tahsilat Makbuzu', 'Müşteri Çeki', 'Nakit Tahsilat', 'Diğer'];
     $channels = $pdo->query("SELECT id, title FROM collection_channels ORDER BY title ASC")->fetchAll(PDO::FETCH_ASSOC);
     $channel_label = "Tahsilat Kanalı (Kasa/Banka)";
     $channel_db_col = "collection_channel_id";
     $amount_label = "Tahsil Edilen Tutar";
     $page_title = "Tahsilat Girişi";
+    $bg_class = "bg-success text-white";
 } else {
+    // ÖDEME
     $doc_options = ['Dekont', 'Tediye Makbuzu', 'Firma Çeki', 'Nakit Ödeme', 'Diğer'];
     $channels = $pdo->query("SELECT id, title FROM payment_methods ORDER BY title ASC")->fetchAll(PDO::FETCH_ASSOC);
     $channel_label = "Ödeme Kaynağı (Kasa/Banka)";
     $channel_db_col = "payment_method_id";
     $amount_label = "Ödenen Tutar";
     $page_title = "Ödeme Çıkışı";
+    $bg_class = "bg-danger text-white";
 }
 
 // --- KAYIT ---
@@ -108,18 +120,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         $last_child_id = $pdo->lastInsertId();
 
-        // DURUM GÜNCELLEME (ÖDEME TAMAMLANDI MI?)
-        $new_total_paid = $total_paid + $base_amount;
-        
-        // Eğer ödenen tutar ana tutara ulaştıysa 'paid' yap
-        if ($new_total_paid >= ($parent['amount'] - 0.05)) {
-            $pdo->prepare("UPDATE transactions SET payment_status = 'paid', actual_payment_date = ? WHERE id = ?")->execute([$date, $parent_id]);
-        } else {
-            // Hala eksik varsa ve hiç ödeme yoktuysa 'unpaid' kalır, kısmi ise listede zaten kısmi görünür
-            // Veritabanında 'partial' diye bir enum yoksa 'unpaid' kalması normal, liste hesaplayarak gösteriyor.
+        // KASA GÜNCELLEME
+        if ($selected_channel_id) {
+            $table_to_update = 'payment_channels'; 
+            if ($child_type == 'payment_out') {
+                $pdo->prepare("UPDATE payment_channels SET current_balance = current_balance - ? WHERE id = ?")->execute([$base_amount, $selected_channel_id]);
+            } else {
+                $pdo->prepare("UPDATE payment_channels SET current_balance = current_balance + ? WHERE id = ?")->execute([$base_amount, $selected_channel_id]);
+            }
         }
 
-        log_action($pdo, 'transaction', $parent_id, 'update', "Ödeme/Tahsilat Eklendi: " . number_format($pay_amount, 2)); 
+        // DURUM GÜNCELLEME
+        $new_total_paid = $total_paid + $base_amount;
+        if ($new_total_paid >= ($parent['amount'] - 0.05)) {
+            $pdo->prepare("UPDATE transactions SET payment_status = 'paid', actual_payment_date = ? WHERE id = ?")->execute([$date, $parent_id]);
+        }
+
+        log_action($pdo, 'transaction', $parent_id, 'update', "Ödeme/Tahsilat Eklendi: " . number_format($pay_amount, 2) . " " . $pay_currency); 
         log_action($pdo, 'transaction', $last_child_id, 'create', "Hareket Kaydı Oluşturuldu.");
 
         $pdo->commit();
@@ -139,54 +156,130 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <title><?php echo $page_title; ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>body { background-color: #f4f6f9; }</style>
+    
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" />
+
+    <style>
+        body { background-color: #f4f6f9; }
+        .detail-row { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding: 8px 0; font-size: 0.9rem; }
+        .detail-label { font-weight: 600; color: #666; }
+        .detail-val { font-weight: bold; color: #333; }
+        .bank-item { border-left: 3px solid #0d6efd; background-color: #f8f9fa; padding: 8px; margin-bottom: 5px; border-radius: 4px; }
+    </style>
 </head>
 <body>
-    <div class="container mt-5">
+    <div class="container mt-4 mb-5">
         <div class="row justify-content-center">
-            <div class="col-md-6">
-                <div class="card shadow border-0">
-                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                        <span class="fw-bold"><i class="fa fa-wallet"></i> <?php echo $page_title; ?></span>
-                        <a href="payment-orders.php" class="btn btn-sm btn-light text-primary"><i class="fa fa-times"></i> Kapat</a>
+            
+            <div class="col-md-5">
+                <div class="card shadow border-0 mb-3">
+                    <div class="card-header bg-light border-bottom">
+                        <h5 class="mb-0 text-secondary"><i class="fa fa-info-circle"></i> İşlem Detayları</h5>
                     </div>
-                    <div class="card-body p-4">
+                    <div class="card-body">
                         
-                        <?php if(!empty($parent['invoice_no']) || !empty($parent['file_path'])): ?>
-                            <div class="card mb-3 border-info bg-info bg-opacity-10">
-                                <div class="card-body py-2 px-3 d-flex align-items-center justify-content-between">
-                                    <div>
-                                        <small class="text-primary fw-bold d-block"><i class="fa fa-file-invoice"></i> Bağlı Olduğu Fatura</small>
-                                        <span class="text-dark">
-                                            <?php echo !empty($parent['invoice_no']) ? $parent['invoice_no'] : 'Fatura No Girilmemiş'; ?>
-                                        </span>
-                                    </div>
-                                    <?php if(!empty($parent['file_path'])): ?>
-                                        <a href="../storage/<?php echo $parent['file_path']; ?>" target="_blank" class="btn btn-sm btn-info text-white shadow-sm">
-                                            <i class="fa fa-eye"></i> Dosyayı Gör
-                                        </a>
-                                    <?php endif; ?>
-                                </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Cari / Firma:</span>
+                            <span class="detail-val text-primary"><?php echo guvenli_html($parent['company_name']); ?></span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">İşlem Türü:</span>
+                            <span class="detail-val">
+                                <?php echo ($parent['type']=='debt') ? '<span class="badge bg-danger">Ödeme Emri (Gider)</span>' : '<span class="badge bg-success">Tahsilat Emri (Gelir)</span>'; ?>
+                            </span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Tur Kodu:</span>
+                            <span class="detail-val"><?php echo !empty($parent['tour_code']) ? $parent['tour_code'] : '-'; ?></span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Departman:</span>
+                            <span class="detail-val"><?php echo !empty($parent['department_name']) ? $parent['department_name'] : '-'; ?></span>
+                        </div>
+                        
+                        <div class="alert alert-secondary mt-3 mb-0 py-2 small">
+                            <strong>Açıklama:</strong><br>
+                            <?php echo guvenli_html($parent['description']); ?>
+                        </div>
+
+                        <?php if(!empty($parent['description']) && (strpos(strtolower($parent['description']), 'iban') !== false || strpos(strtolower($parent['description']), 'banka') !== false)): ?>
+                            <div class="alert alert-warning mt-2 py-2 small">
+                                <i class="fa fa-university"></i> <strong>Banka Bilgisi Algılandı:</strong><br>
+                                Bu işlemin açıklamasında banka/iban bilgisi geçiyor. Lütfen kontrol ediniz.
                             </div>
                         <?php endif; ?>
 
-                        <div class="alert alert-light border shadow-sm mb-4">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="text-muted">Kalan Bakiye:</span> 
-                                <span class="text-danger fw-bold fs-4" id="remaining_display" data-val="<?php echo $remaining; ?>">
+                        <hr>
+                        
+                        <div class="row text-center mb-3">
+                            <div class="col-6 border-end">
+                                <small class="d-block text-muted">Toplam Tutar</small>
+                                <strong class="fs-5 text-dark">
+                                    <?php 
+                                        echo number_format($parent['original_amount'], 2) . ' ' . $parent['currency']; 
+                                        if($parent['currency'] != 'TRY') echo '<br><small class="text-muted fw-normal" style="font-size:0.75rem">('.number_format($parent['amount'], 2).' TL)</small>';
+                                    ?>
+                                </strong>
+                            </div>
+                            <div class="col-6">
+                                <small class="d-block text-muted">Kalan Bakiye</small>
+                                <strong class="fs-5 text-danger">
                                     <?php echo number_format($remaining, 2); ?> TL
-                                </span>
+                                </strong>
                             </div>
                         </div>
 
+                        <?php if(!empty($customer_banks)): ?>
+                            <div class="card border-primary bg-primary bg-opacity-10">
+                                <div class="card-body py-2">
+                                    <h6 class="text-primary fw-bold mb-2 small"><i class="fa fa-university"></i> Cari Banka Hesapları</h6>
+                                    <div style="max-height: 200px; overflow-y: auto;">
+                                        <?php foreach($customer_banks as $bank): ?>
+                                            <div class="bank-item position-relative">
+                                                <div class="d-flex justify-content-between">
+                                                    <span class="fw-bold small"><?php echo guvenli_html($bank['bank_name']); ?></span>
+                                                    <span class="badge bg-secondary"><?php echo $bank['currency']; ?></span>
+                                                </div>
+                                                <div class="font-monospace small text-dark mt-1">
+                                                    <?php echo guvenli_html($bank['iban']); ?>
+                                                </div>
+                                                <button class="btn btn-sm btn-link p-0 position-absolute bottom-0 end-0 me-2 mb-1" 
+                                                        onclick="navigator.clipboard.writeText('<?php echo $bank['iban']; ?>'); alert('IBAN Kopyalandı!');" 
+                                                        title="Kopyala">
+                                                    <i class="fa fa-copy"></i>
+                                                </button>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php else: ?>
+                            <?php if($parent['type'] == 'debt'): ?>
+                                <div class="alert alert-warning small py-2"><i class="fa fa-exclamation-triangle"></i> Bu carinin kayıtlı banka hesabı bulunamadı.</div>
+                            <?php endif; ?>
+                        <?php endif; ?>
+
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-7">
+                <div class="card shadow border-0">
+                    <div class="card-header <?php echo $bg_class; ?> d-flex justify-content-between align-items-center">
+                        <span class="fw-bold"><i class="fa fa-wallet"></i> <?php echo $page_title; ?></span>
+                        <a href="payment-orders.php" class="btn btn-sm btn-light text-dark"><i class="fa fa-times"></i> İptal</a>
+                    </div>
+                    <div class="card-body p-4">
+                        
                         <?php if(!empty($error)): ?>
                             <div class="alert alert-danger"><?php echo $error; ?></div>
                         <?php endif; ?>
 
                         <form method="POST" enctype="multipart/form-data">
                             <div class="mb-3">
-                                <label class="form-label">İşlem Tarihi</label>
-                                <input type="date" name="date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required>
+                                <label class="form-label fw-bold">İşlem Tarihi</label>
+                                <input type="date" name="date" class="form-control form-control-lg" value="<?php echo date('Y-m-d'); ?>" required>
                             </div>
 
                             <div class="card bg-light border-0 mb-3">
@@ -195,10 +288,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         <div class="col-md-4">
                                             <label class="form-label small fw-bold">Para Birimi</label>
                                             <select name="currency" id="currency" class="form-select" onchange="updateRate()">
-                                                <option value="TRY">TRY (₺)</option>
-                                                <option value="USD">USD ($)</option>
-                                                <option value="EUR">EUR (€)</option>
-                                                <option value="GBP">GBP (£)</option>
+                                                <option value="TRY" <?php echo ($parent['currency']=='TRY')?'selected':''; ?>>TRY (₺)</option>
+                                                <option value="USD" <?php echo ($parent['currency']=='USD')?'selected':''; ?>>USD ($)</option>
+                                                <option value="EUR" <?php echo ($parent['currency']=='EUR')?'selected':''; ?>>EUR (€)</option>
+                                                <option value="GBP" <?php echo ($parent['currency']=='GBP')?'selected':''; ?>>GBP (£)</option>
                                             </select>
                                         </div>
                                         <div class="col-md-4">
@@ -210,7 +303,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <input type="number" step="0.0001" name="exchange_rate" id="exchange_rate" class="form-control" value="1.0000" readonly oninput="calcBase()">
                                         </div>
                                         <div class="col-12 text-end mt-2">
-                                            <small class="text-muted">Hesaptan Düşecek: <span id="calc_result" class="fw-bold text-dark">0.00 TL</span></small>
+                                            <small class="text-muted">Bakiyeden Düşecek Tutar: <span id="calc_result" class="fw-bold text-dark">0.00 TL</span></small>
                                         </div>
                                     </div>
                                 </div>
@@ -218,7 +311,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                             <div class="mb-3">
                                 <label class="form-label fw-bold text-primary"><?php echo $channel_label; ?></label>
-                                <select name="channel_id" class="form-select" required>
+                                <select name="channel_id" id="channel_id" class="form-select form-select-lg" required>
                                     <option value="">Seçiniz...</option>
                                     <?php foreach($channels as $ch): ?>
                                         <option value="<?php echo $ch['id']; ?>"><?php echo guvenli_html($ch['title']); ?></option>
@@ -226,29 +319,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </select>
                             </div>
 
-                            <div class="mb-3">
-                                <label class="form-label">Belge Türü</label>
-                                <select name="document_type" class="form-select" required>
-                                    <option value="">Seçiniz...</option>
-                                    <?php foreach($doc_options as $opt): ?>
-                                        <option value="<?php echo $opt; ?>"><?php echo $opt; ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            
-                            <div class="mb-3">
-                                <label class="form-label">Belge Dosyası (Opsiyonel)</label>
-                                <input type="file" name="document" class="form-control" accept=".pdf,.jpg,.png,.jpeg">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Belge Türü</label>
+                                    <select name="document_type" class="form-select" required>
+                                        <option value="">Seçiniz...</option>
+                                        <?php foreach($doc_options as $opt): ?>
+                                            <option value="<?php echo $opt; ?>"><?php echo $opt; ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Belge Dosyası</label>
+                                    <input type="file" name="document" class="form-control" accept=".pdf,.jpg,.png,.jpeg">
+                                </div>
                             </div>
 
                             <div class="mb-3">
-                                <label class="form-label">Açıklama</label>
-                                <textarea name="description" class="form-control" rows="2"></textarea>
+                                <label class="form-label">Açıklama (Opsiyonel)</label>
+                                <textarea name="description" class="form-control" rows="2" placeholder="Örn: 1. Taksit ödemesi..."></textarea>
                             </div>
                             
-                            <div class="d-grid">
+                            <div class="d-grid mt-4">
                                 <button type="submit" class="btn btn-success btn-lg shadow-sm">
-                                    <i class="fa fa-check-circle"></i> Kaydet
+                                    <i class="fa fa-check-circle"></i> İşlemi Kaydet ve Tamamla
                                 </button>
                             </div>
                         </form>
@@ -259,13 +353,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
     <script>
+        $(document).ready(function() {
+            // Select2 Başlatma
+            $('#channel_id').select2({
+                theme: 'bootstrap-5',
+                width: '100%',
+                placeholder: 'Yazarak arayın veya seçin...'
+            });
+        });
+
         function updateRate() {
             var currency = document.getElementById('currency').value;
             var rateInput = document.getElementById('exchange_rate');
             if (currency === 'TRY') { rateInput.value = 1.0000; rateInput.readOnly = true; calcBase(); } 
             else { 
-                rateInput.readOnly = false; rateInput.placeholder = "Yükleniyor...";
+                rateInput.readOnly = false; rateInput.placeholder = "Kur Alınıyor...";
                 $.get('api-get-currency-rate.php?code='+currency, function(d){ 
                     if(d.status === 'success') { rateInput.value = d.rate; calcBase(); } 
                 }, 'json'); 
@@ -277,6 +383,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             var total = amt * rate;
             document.getElementById('calc_result').innerText = total.toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' TL';
         }
+        
+        window.onload = function() {
+            updateRate();
+        };
     </script>
 </body>
 </html>

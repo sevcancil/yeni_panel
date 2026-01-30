@@ -13,11 +13,13 @@ $stmt->execute([$id]);
 $customer = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$customer) die("Cari bulunamadı.");
 
-// HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ (FATURA/ÖDEME) ÇEK
-$sql = "SELECT t.*, tc.code as tour_code, d.name as dep_name 
+// HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ ÇEK
+$sql = "SELECT t.*, 
+               p.type as parent_type, 
+               tc.code as tour_code 
         FROM transactions t 
+        LEFT JOIN transactions p ON t.parent_id = p.id 
         LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id 
-        LEFT JOIN departments d ON t.department_id = d.id
         WHERE t.customer_id = ? 
         ORDER BY 
             (CASE WHEN t.parent_id > 0 THEN t.parent_id ELSE t.id END) ASC, 
@@ -27,10 +29,12 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute([$id]);
 $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// --- HESAPLAMA MOTORU ---
+// --- DEĞİŞKENLER ---
 $official_balance = $customer['opening_balance']; 
 $pending_debt = 0;   
 $pending_credit = 0; 
+$total_volume_in = 0;
+$total_volume_out = 0;
 
 $processed_rows = [];
 $running_balance = $customer['opening_balance']; 
@@ -38,103 +42,148 @@ $running_balance = $customer['opening_balance'];
 foreach ($transactions as $row) {
     $amount = (float)$row['amount'];
     $type = $row['type'];
-    
-    // --- BURASI DÜZELTİLDİ: STATÜ KONTROLÜ ---
-    // Bir işlem ne zaman resmidir?
-    // 1. Ödeme/Tahsilat ise her zaman resmidir.
-    // 2. Fatura ise (type=invoice) veya Faturası kesilmiş sipariş ise (invoice_status=issued).
-    
-    // Önce bu satırın bir child fatura kaydı mı yoksa ana sipariş mi olduğunu anlayalım.
-    $is_child_invoice = ($type == 'invoice');
-    
-    // Eğer bu satır bir "Fatura Girişi" (Child) ise:
-    // Bu satırın kendisine özel bir matematiksel etkisi yoktur çünkü ana siparişin durumunu değiştirdik.
-    // Sadece görsel olarak orada durur.
-    
-    // Eğer bu satır "Ana Sipariş" (debt/credit) ise:
-    // Durumuna bakarız. 'issued' ise Resmiye yazar, değilse Bekleyene yazar.
-    
-    $effect_official = 0;
-    $is_pending_row = false; 
-    
-    if ($type == 'debt') {
-        // GİDER SİPARİŞİ
-        if ($row['invoice_status'] == 'issued') {
-            // Faturası Girilmiş -> Resmi Borç
-            $effect_official = -$amount;
-        } else {
-            // Faturası Yok -> Bekleyen Borç
-            $pending_debt += $amount;
-            $is_pending_row = true;
-        }
-    } 
-    elseif ($type == 'credit') {
-        // GELİR SİPARİŞİ
-        if ($row['invoice_status'] == 'issued') {
-            // Faturası Kesilmiş -> Resmi Alacak
-            $effect_official = $amount;
-        } else {
-            // Faturası Yok -> Bekleyen Alacak
-            $pending_credit += $amount;
-            $is_pending_row = true;
-        }
-    }
-    elseif ($type == 'payment_out') {
-        // ÖDEME (Borç Düşer/Bakiye Artar)
-        $effect_official = $amount; 
-    } 
-    elseif ($type == 'payment_in') {
-        // TAHSİLAT (Alacak Düşer/Bakiye Azalır)
-        $effect_official = -$amount;
-    }
-    
-    // Child Invoice satırlarını bakiyeye katmıyoruz (Ana satır zaten katıldı)
-    // Sadece görsel olarak listeliyoruz.
+    $is_deleted = isset($row['is_deleted']) && $row['is_deleted'] == 1;
 
-    // Toplamları İşle
-    $official_balance += $effect_official;
-    $running_balance += $effect_official;
+    // Sütun Değerleri (Her satır için sıfırlanır)
+    $col_siparis = 0;   // Sütun 1: Sipariş (Etkisiz)
+    $col_para = 0;      // Sütun 2: Ödendi (Para)
+    $col_fatura = 0;    // Sütun 3: Tahsil Edildi (Fatura)
     
+    $effect_on_balance = 0; // Bu satırın bakiyeye etkisi (+/-)
+    $is_pending_row = false; 
+    $is_child = ($row['parent_id'] > 0);
+
+    if ($is_deleted) {
+        $effect_on_balance = 0;
+        // Silinenler bakiyeyi etkilemez
+    } else {
+        
+        // 1. ANA SİPARİŞLER (Sadece 'Tutar' sütunu)
+        if ($type == 'debt') {
+            $col_siparis = $amount;
+            // Faturası yoksa bekleyen borçtur
+            if ($row['invoice_status'] != 'issued') {
+                $pending_debt += $amount;
+                $is_pending_row = true;
+            }
+        } 
+        elseif ($type == 'credit') {
+            $col_siparis = $amount;
+            // Faturası yoksa bekleyen alacaktır
+            if ($row['invoice_status'] != 'issued') {
+                $pending_credit += $amount;
+                $is_pending_row = true;
+            }
+        }
+
+        // 2. FATURALAR (Sütun 3: TAHSİL EDİLDİ)
+        elseif ($type == 'invoice') {
+            
+            if ($row['parent_type'] == 'debt') {
+                // GİDER FATURASI (Bize Borç Yazar) -> POZİTİF (+)
+                $col_fatura = $amount; 
+                $effect_on_balance = $amount; 
+                
+                // İstatistikler
+                $pending_debt -= $amount; 
+                $total_volume_out += $amount;
+            } 
+            elseif ($row['parent_type'] == 'credit') {
+                // GELİR FATURASI (Bize Alacak Yazar) -> NEGATİF (-)
+                $col_fatura = -$amount; 
+                $effect_on_balance = -$amount;
+                
+                // İstatistikler
+                $pending_credit -= $amount;
+                $total_volume_in += $amount;
+            }
+        }
+
+        // 3. PARA HAREKETLERİ (Sütun 2: ÖDENDİ)
+        elseif ($type == 'payment_out') {
+            // ÖDEME ÇIKIŞI (Borcu Kapatır) -> NEGATİF (-)
+            // Çünkü Gider Faturası (+) idi, onu sıfırlamak için (-) gerekir.
+            $col_para = -$amount; 
+            $effect_on_balance = -$amount;
+        } 
+        elseif ($type == 'payment_in') {
+            // TAHSİLAT GİRİŞİ (Alacağı Kapatır) -> POZİTİF (+)
+            // Çünkü Gelir Faturası (-) idi, onu sıfırlamak için (+) gerekir.
+            $col_para = $amount; 
+            $effect_on_balance = $amount;
+        }
+    }
+
+    $official_balance += $effect_on_balance;
+    $running_balance += $effect_on_balance;
+    
+    // Döviz Gösterimi
+    $currency_display = ($row['currency'] != 'TRY') ? number_format($row['original_amount'], 2) . ' ' . $row['currency'] : '';
+
     $processed_rows[] = [
         'data' => $row,
-        'effect_official' => $effect_official,
+        'col_siparis' => $col_siparis,
+        'col_para' => $col_para,
+        'col_fatura' => $col_fatura,
         'balance' => $running_balance,
         'is_pending' => $is_pending_row,
-        'is_invoice_log' => $is_child_invoice, // Görsel ayrım için
-        'is_child' => ($row['parent_id'] > 0)
+        'is_invoice' => ($type == 'invoice'),
+        'is_child' => $is_child,
+        'is_deleted' => $is_deleted,
+        'currency_display' => $currency_display
     ];
 }
 
-// Bakiye Renk ve Metin
+// Bakiye Renklendirme Fonksiyonu
 function getBalanceStyle($balance) {
-    if ($balance < -0.01) return ['class' => 'text-danger', 'text' => number_format(abs($balance), 2, ',', '.') . ' ₺ (BORÇLUYUZ)'];
-    if ($balance > 0.01) return ['class' => 'text-success', 'text' => number_format($balance, 2, ',', '.') . ' ₺ (ALACAKLIYIZ)'];
-    return ['class' => 'text-muted', 'text' => '0,00 ₺ (DENK)'];
+    // Excel mantığına göre: Pozitif Bakiye = Borçluyuz, Negatif Bakiye = Alacaklıyız
+    // 0 = Kapanmış
+    if ($balance > 0.01) return ['class' => 'text-danger', 'text' => number_format($balance, 2, ',', '.') . ' ₺ <small>(BORÇLUYUZ)</small>'];
+    if ($balance < -0.01) return ['class' => 'text-success', 'text' => number_format(abs($balance), 2, ',', '.') . ' ₺ <small>(ALACAKLIYIZ)</small>'];
+    return ['class' => 'text-muted', 'text' => '0,00 ₺ <small>(KAPANDI)</small>'];
 }
 
 $off_style = getBalanceStyle($official_balance);
-$total_risk = $official_balance + ($pending_credit - $pending_debt);
-$risk_style = getBalanceStyle($total_risk);
+$total_risk = $official_balance + ($pending_credit - $pending_debt); // (Negatifler alacak, Pozitifler borç)
+// Risk hesabı biraz karışık olabilir bu mantıkta, basitleştirelim:
+// Resmi Bakiye + (Bekleyen Alacaklar - Bekleyen Borçlar) yerine
+// Bekleyenler resmiyete dökülmediği için risk analizini ayrı tutmak daha iyidir.
+// Şimdilik sadece resmi bakiyeyi gösterelim ya da eski mantığı koruyalım.
+
+$net_gain = $total_volume_in - $total_volume_out;
+$gain_style = ($net_gain >= 0) ? 'text-success' : 'text-danger';
 
 ?>
 <!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title><?php echo guvenli_html($customer['company_name']); ?> - Ekstre</title>
+    <title><?php echo guvenli_html($customer['company_name']); ?> - Detay</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        .card-left-border-primary { border-left: 5px solid #0d6efd; }
-        .card-left-border-warning { border-left: 5px solid #ffc107; }
-        .card-left-border-success { border-left: 5px solid #198754; }
+        .card-left-primary { border-left: 5px solid #0d6efd; }
+        .card-left-warning { border-left: 5px solid #ffc107; }
+        .card-left-success { border-left: 5px solid #198754; }
+        .card-left-info { border-left: 5px solid #0dcaf0; }
         
-        .pending-row { background-color: #fff3cd !important; color: #856404; } /* Sarımtırak (Bekleyen) */
-        .invoice-row { background-color: #e2e3e5 !important; color: #383d41; } /* Gri (Fatura Logu) */
-        .official-row { background-color: #fff !important; } /* Beyaz (Resmileşmiş Sipariş) */
+        .row-parent { background-color: #e9ecef !important; color: #495057; font-weight: 600; border-top: 3px solid #dee2e6; }
+        .row-child { background-color: #fff !important; }
+        .row-deleted { background-color: #ffe6e6 !important; color: #b02a37 !important; text-decoration: line-through; opacity: 0.7; }
+        .row-deleted .badge { opacity: 0.5; }
+
+        .child-indent { padding-left: 40px !important; position: relative; }
+        .child-icon { position: absolute; left: 15px; top: 15px; color: #adb5bd; }
+
+        .table-header-custom th { background-color: #343a40; color: white; border:none; padding: 12px; font-weight: 500; }
+        .balance-box { min-height: 100px; display: flex; flex-direction: column; justify-content: center; }
         
-        .table-header-custom th { background-color: #343a40; color: white; border:none; padding: 12px; }
-        .balance-box { min-height: 120px; display: flex; flex-direction: column; justify-content: center; }
+        .amt-box { font-weight: bold; display: block; }
+        .curr-sub { font-size: 0.75rem; color: #6c757d; font-weight: normal; display: block; }
+        
+        /* Renk Sınıfları */
+        .val-pos { color: #dc3545; } /* Pozitif (Borç) Kırmızı */
+        .val-neg { color: #198754; } /* Negatif (Alacak/Ödeme) Yeşil */
     </style>
 </head>
 <body class="bg-light">
@@ -159,37 +208,34 @@ $risk_style = getBalanceStyle($total_risk);
         </div>
 
         <div class="row mb-4">
-            <div class="col-md-4">
-                <div class="card shadow h-100 card-left-border-primary">
+            <div class="col-md-3">
+                <div class="card shadow h-100 card-left-primary">
                     <div class="card-body balance-box">
-                        <div class="text-uppercase text-primary fw-bold text-xs mb-2">Resmi Bakiye</div>
-                        <div class="h3 mb-0 fw-bold <?php echo $off_style['class']; ?>"><?php echo $off_style['text']; ?></div>
-                        <div class="small text-muted mt-2 border-top pt-2"><i class="fa fa-check-circle"></i> Faturalaşmış Net Durum</div>
+                        <div class="text-uppercase text-primary fw-bold text-xs mb-1">Resmi Bakiye</div>
+                        <div class="h4 mb-0 fw-bold <?php echo $off_style['class']; ?>"><?php echo $off_style['text']; ?></div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
-                <div class="card shadow h-100 card-left-border-warning">
+            <div class="col-md-3">
+                <div class="card shadow h-100 card-left-warning">
                     <div class="card-body balance-box">
-                        <div class="text-uppercase text-warning fw-bold text-xs mb-2">Fatura Bekleyen (Siparişler)</div>
-                        <div class="row">
-                            <div class="col-6 border-end"><small class="d-block text-muted">Gelecek</small><span class="fw-bold text-success"><?php echo number_format($pending_credit, 2); ?> ₺</span></div>
-                            <div class="col-6"><small class="d-block text-muted">Gidecek</small><span class="fw-bold text-danger"><?php echo number_format($pending_debt, 2); ?> ₺</span></div>
+                        <div class="text-uppercase text-warning fw-bold text-xs mb-1">Fatura Bekleyen</div>
+                        <div class="row g-0">
+                            <div class="col-6 border-end pe-2"><small>Alacak</small><br><span class="fw-bold text-success"><?php echo number_format($pending_credit, 0); ?> ₺</span></div>
+                            <div class="col-6 ps-2"><small>Borç</small><br><span class="fw-bold text-danger"><?php echo number_format($pending_debt, 0); ?> ₺</span></div>
                         </div>
-                        <div class="small text-muted mt-2 border-top pt-2"><i class="fa fa-clock"></i> Henüz faturası gelmemiş</div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
-                <div class="card shadow h-100 card-left-border-success bg-white">
+            <div class="col-md-3">
+                <div class="card shadow h-100 card-left-info">
                     <div class="card-body balance-box">
-                        <div class="text-uppercase text-success fw-bold text-xs mb-2">Genel Toplam (Risk)</div>
-                        <div class="h3 mb-0 fw-bold <?php echo $risk_style['class']; ?>"><?php echo $risk_style['text']; ?></div>
-                        <div class="small text-muted mt-2 border-top pt-2"><i class="fa fa-calculator"></i> Resmi + Bekleyen Hepsi</div>
+                        <div class="text-uppercase text-info fw-bold text-xs mb-1">Ticaret Hacmi</div>
+                        <div class="h4 mb-0 fw-bold <?php echo $gain_style; ?>"><?php echo number_format($net_gain, 2); ?> ₺</div>
                     </div>
                 </div>
             </div>
-        </div>
+            </div>
 
         <div class="card shadow mb-4">
             <div class="card-header py-3 bg-white">
@@ -200,72 +246,102 @@ $risk_style = getBalanceStyle($total_risk);
                     <table class="table table-hover mb-0 align-middle" style="font-size: 0.9rem;">
                         <thead class="table-header-custom">
                             <tr>
-                                <th width="100">Tarih</th>
-                                <th width="140">İşlem Türü</th>
+                                <th width="50">ID</th>
+                                <th width="90">Tarih</th>
+                                <th width="80">Tur Kodu</th>
+                                <th width="120">İşlem Türü</th>
                                 <th>Açıklama / Belge</th>
-                                <th class="text-end" style="background-color:#ffecec; color:#842029;">Borç</th>
-                                <th class="text-end" style="background-color:#e8f5e9; color:#0f5132;">Alacak</th>
-                                <th class="text-end bg-dark text-white">Resmi Bakiye</th>
+                                <th class="text-end bg-light text-secondary" width="130">TUTAR (SİPARİŞ)</th>
+                                <th class="text-end" width="130" style="background-color:#ffecec; color:#842029;">ÖDENDİ (PARA)</th>
+                                <th class="text-end" width="130" style="background-color:#e8f5e9; color:#0f5132;">TAHSİL EDİLDİ (FATURA)</th>
+                                <th class="text-end bg-dark text-white" width="140">BAKİYE</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr class="fw-bold bg-light border-bottom">
+                                <td>-</td>
                                 <td><?php echo date('d.m.Y', strtotime($customer['opening_balance_date'])); ?></td>
-                                <td>DEVİR</td>
+                                <td>-</td>
+                                <td><span class="badge bg-secondary">DEVİR</span></td>
                                 <td>AÇILIŞ BAKİYESİ</td>
-                                <td class="text-end"><?php echo ($customer['opening_balance']<0)?number_format(abs($customer['opening_balance']),2):'-'; ?></td>
-                                <td class="text-end"><?php echo ($customer['opening_balance']>0)?number_format($customer['opening_balance'],2):'-'; ?></td>
+                                <td class="text-end">-</td>
+                                <td class="text-end">-</td>
+                                <td class="text-end">-</td>
                                 <td class="text-end text-dark bg-light border-start"><?php echo number_format($customer['opening_balance'], 2); ?> ₺</td>
                             </tr>
+
                             <?php foreach ($processed_rows as $p): 
                                 $r = $p['data'];
-                                
-                                // Stil Belirleme
-                                $row_class = 'official-row';
-                                if ($p['is_pending']) $row_class = 'pending-row';
-                                elseif ($p['is_invoice_log']) $row_class = 'invoice-row';
+                                $row_class = $p['is_deleted'] ? 'row-deleted' : ($p['is_child'] ? 'row-child' : 'row-parent');
+                                $id_display = $p['is_child'] ? '' : '<strong>#'.$r['id'].'</strong>';
+                                $tour_display = !empty($r['tour_code']) ? '<span class="badge bg-info text-dark">'.$r['tour_code'].'</span>' : '-';
 
-                                $amount_fmt = number_format((float)$r['amount'], 2, ',', '.');
-                                $indent = $p['is_child'] ? '<i class="fa fa-level-up-alt fa-rotate-90 text-primary ms-3 me-2"></i>' : '';
-                                
-                                // Tip Etiketi
                                 $badge = '';
-                                if ($r['type']=='debt') {
-                                    $badge = $p['is_pending'] 
-                                        ? '<span class="badge bg-warning text-dark"><i class="fa fa-clock"></i> Sipariş (Faturasız)</span>' 
-                                        : '<span class="badge bg-danger">Gider Faturası</span>';
-                                }
-                                elseif ($r['type']=='credit') {
-                                    $badge = $p['is_pending']
-                                        ? '<span class="badge bg-warning text-dark"><i class="fa fa-clock"></i> Sipariş (Faturasız)</span>'
-                                        : '<span class="badge bg-success">Gelir Faturası</span>';
-                                }
-                                elseif ($r['type']=='invoice') $badge='<span class="badge bg-secondary text-white"><i class="fa fa-info-circle"></i> Fatura Girişi</span>';
-                                elseif ($r['type']=='payment_out') $badge='<span class="badge bg-primary">Ödeme</span>';
-                                elseif ($r['type']=='payment_in') $badge='<span class="badge bg-dark">Tahsilat</span>';
+                                if ($r['type']=='debt') $badge = '<span class="badge bg-secondary">Sipariş (Gider)</span>';
+                                elseif ($r['type']=='credit') $badge = '<span class="badge bg-secondary">Sipariş (Gelir)</span>';
+                                elseif ($r['type']=='invoice') $badge = '<span class="badge bg-dark">FATURA</span>';
+                                elseif ($r['type']=='payment_out') $badge = '<span class="badge bg-primary">Ödeme</span>';
+                                elseif ($r['type']=='payment_in') $badge = '<span class="badge bg-success">Tahsilat</span>';
+                                if($p['is_deleted']) $badge .= ' <span class="badge bg-danger">İPTAL</span>';
+
+                                $desc_class = $p['is_child'] ? 'child-indent' : '';
+                                $indent_icon = $p['is_child'] ? '<i class="fa fa-level-up-alt fa-rotate-90 child-icon"></i>' : '';
+                                
+                                // Stil ve Renk Sınıfları
+                                $style_para = ($p['col_para'] < 0) ? 'val-neg' : 'val-pos'; // Negatif yeşil olsun mu? Hayır standart kalsın
+                                // Excel mantığı: Ödeme (-) , Tahsilat (+)
+                                // Kırmız/Yeşil yapalım:
+                                // Ödeme (-): Yeşil (Borç kapıyor) - Veya Kırmızı (Para çıkıyor)
+                                // Biz "Bakiye" odaklı gidiyoruz. 
+                                // Pozitif Değerler (Borç Artıranlar) -> Kırmızı
+                                // Negatif Değerler (Borç Düşürenler) -> Yeşil
+                                
+                                $cls_para = ($p['col_para'] > 0) ? 'text-danger' : 'text-success'; 
+                                // Not: Tahsilat (+) idi, bu borcu/alacağı nötrler ama bakiye sisteminde (+) borçtur.
+                                // Tahsilat (Para Girişi) -> Alacağı kapatır. Alacak (-) idi. Kapatmak için (+) lazım.
+                                // O zaman (+) -> Yeşil olmalı (Para geldi).
+                                // Ödeme (Para Çıkışı) -> (-) -> Kırmızı olmalı (Para gitti).
+                                // Ama matematiksel olarak:
+                                // Ödeme (-) : Bakiyeyi (Borcu) düşürür -> Yeşil etki.
+                                
+                                // Görsel karmaşa olmaması için sadece sayıları yazalım, renkleri standart tutalım.
+                                $cls_para = ($p['col_para'] < 0) ? 'text-danger' : 'text-success'; // (-) Çıkış, (+) Giriş
+                                
+                                $cls_fatura = ($p['col_fatura'] > 0) ? 'text-danger' : 'text-success'; // (+) Borç Faturası, (-) Alacak Faturası
                             ?>
                                 <tr class="<?php echo $row_class; ?>">
+                                    <td class="text-center"><?php echo $id_display; ?></td>
                                     <td><?php echo date('d.m.Y', strtotime($r['date'])); ?></td>
+                                    <td><?php echo $tour_display; ?></td>
                                     <td><?php echo $badge; ?></td>
-                                    <td>
-                                        <div class="d-flex align-items-center">
-                                            <?php echo $indent; ?>
-                                            <div>
-                                                <strong><?php echo guvenli_html($r['invoice_no']); ?></strong>
-                                                <div class="small text-muted"><?php echo guvenli_html($r['description']); ?></div>
-                                            </div>
-                                        </div>
+                                    
+                                    <td class="<?php echo $desc_class; ?>">
+                                        <?php echo $indent_icon; ?>
+                                        <strong><?php echo guvenli_html($r['invoice_no']); ?></strong>
+                                        <div class="text-muted text-truncate" style="max-width:300px;"><?php echo guvenli_html($r['description']); ?></div>
                                     </td>
-                                    <td class="text-end text-danger bg-light bg-opacity-50">
-                                        <?php if ($p['effect_official'] < 0) echo number_format(abs($p['effect_official']), 2, ',', '.'); 
-                                              elseif ($p['is_pending'] && $r['type']=='debt') echo '<span class="text-muted">('.$amount_fmt.')</span>'; 
-                                              else echo '-'; ?>
+
+                                    <td class="text-end bg-light text-secondary">
+                                        <?php if($p['col_siparis'] > 0): ?>
+                                            <span class="amt-box"><?php echo number_format($p['col_siparis'], 2); ?></span>
+                                            <span class="curr-sub"><?php echo $p['currency_display']; ?></span>
+                                        <?php else: echo '-'; endif; ?>
                                     </td>
-                                    <td class="text-end text-success bg-light bg-opacity-50">
-                                        <?php if ($p['effect_official'] > 0) echo number_format($p['effect_official'], 2, ',', '.'); 
-                                              elseif ($p['is_pending'] && $r['type']=='credit') echo '<span class="text-muted">('.$amount_fmt.')</span>'; 
-                                              else echo '-'; ?>
+
+                                    <td class="text-end bg-light bg-opacity-50">
+                                        <?php if($p['col_para'] != 0): ?>
+                                            <span class="amt-box <?php echo $cls_para; ?>"><?php echo number_format($p['col_para'], 2); ?></span>
+                                            <span class="curr-sub"><?php echo $p['currency_display']; ?></span>
+                                        <?php else: echo '-'; endif; ?>
                                     </td>
+
+                                    <td class="text-end bg-light bg-opacity-50">
+                                        <?php if($p['col_fatura'] != 0): ?>
+                                            <span class="amt-box <?php echo $cls_fatura; ?>"><?php echo number_format($p['col_fatura'], 2); ?></span>
+                                            <span class="curr-sub"><?php echo $p['currency_display']; ?></span>
+                                        <?php else: echo '-'; endif; ?>
+                                    </td>
+
                                     <td class="text-end fw-bold border-start text-dark">
                                         <?php echo number_format($p['balance'], 2, ',', '.'); ?> ₺
                                     </td>

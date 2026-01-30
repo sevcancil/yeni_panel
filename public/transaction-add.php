@@ -38,28 +38,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $amount = $amount * $exchange_rate;
         }
 
-        // Açıklama
+        // Açıklama ve Kaynak İşlemleri
         $description = temizle($_POST['description']);
+        $recipient_bank_id = null;
+
         if ($doc_type === 'payment_order' && !empty($_POST['payment_source_simple'])) {
             $simple_source = temizle($_POST['payment_source_simple']);
-            $description .= " [Talep: " . $simple_source . "]";
+            
+            if ($simple_source == 'Havale/EFT') {
+                // Yurt içi banka seçimi
+                $recipient_bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
+                $description .= " [Yöntem: Havale/EFT]";
+            } 
+            elseif ($simple_source == 'Yurtdışı Banka') {
+                // SWIFT Bilgilerini Açıklamaya Ekle
+                $swift_code = !empty($_POST['swift_code']) ? temizle($_POST['swift_code']) : '-';
+                $foreign_bank = !empty($_POST['foreign_bank_name']) ? temizle($_POST['foreign_bank_name']) : '-';
+                $description .= " [Transfer: Yurtdışı - Banka: $foreign_bank - SWIFT: $swift_code]";
+            }
+            else {
+                $description .= " [Yöntem: " . $simple_source . "]";
+            }
         }
 
         // Fatura Durumu
         $invoice_status = 'pending';
         if ($doc_type === 'invoice_order') {
-            // Checkbox işaretli mi?
             if (isset($_POST['issue_invoice_check'])) {
                 $invoice_status = 'to_be_issued'; 
             } else {
                 $invoice_status = 'waiting_approval';
             }
         }
-
-        $recipient_bank_id = null;
-        if ($doc_type === 'payment_order' && isset($_POST['payment_source_simple']) && $_POST['payment_source_simple'] == 'Havale/EFT') {
-            $recipient_bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
-        } 
 
         $type = ($doc_type === 'payment_order') ? 'debt' : 'credit';
 
@@ -80,11 +90,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $last_id = $pdo->lastInsertId();
         
-        // LOGLAMA (Kullanıcı Adıyla)
-        // Log tablonuzda 'user_id' sütunu varsa zaten tutuyordur ama açıklamaya da ekleyelim garanti olsun.
-        log_action($pdo, 'transaction', $last_id, 'create', "$current_user_name tarafından yeni işlem oluşturuldu: $original_amount $currency tutarında $description");
+        // LOGLAMA
+        $current_user_name = $_SESSION['username'] ?? 'Kullanıcı'; 
+        
+        $log_amount_text = "";
+        if ($currency == 'TRY') {
+            $log_amount_text = number_format($amount, 2, ',', '.') . " TL";
+        } else {
+            $log_amount_text = number_format($original_amount, 2, ',', '.') . " " . $currency;
+        }
 
-        // YÖNLENDİRME: Hepsini Ana Listeye At
+        $log_desc = "$current_user_name tarafından yeni işlem oluşturuldu: $log_amount_text tutarında. Açıklama: $description";
+
+        log_action($pdo, 'transaction', $last_id, 'create', $log_desc);
+        
         header("Location: payment-orders.php?msg=added");
         exit;
 
@@ -220,16 +239,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <select name="payment_source_simple" id="payment_source_simple" class="form-select border-primary" onchange="togglePaymentSource()">
                                     <option value="Nakit">Nakit</option>
                                     <option value="Kredi Kartı">Kredi Kartı</option>
-                                    <option value="Havale/EFT">Havale / EFT</option>
+                                    <option value="Havale/EFT">Havale / EFT (Yurt İçi)</option>
+                                    <option value="Yurtdışı Banka">Yurtdışı Banka (SWIFT)</option>
                                 </select>
                             </div>
+                            
                             <div class="mb-3 d-none" id="recipient_bank_div">
-                                <label class="form-label">Alıcı Banka Hesabı</label>
+                                <label class="form-label">Alıcı Banka Hesabı (Cari)</label>
                                 <div class="input-group">
                                     <select name="bank_id" id="bank_id" class="form-select">
                                         <option value="">Önce Cari Seçiniz...</option>
                                     </select>
                                     <button type="button" class="btn btn-outline-secondary" onclick="openBankModal()"><i class="fa fa-plus"></i></button>
+                                </div>
+                            </div>
+
+                            <div class="mb-3 d-none" id="swift_div">
+                                <div class="alert alert-info py-2">
+                                    <small><i class="fa fa-globe"></i> Yurtdışı transferi seçildi.</small>
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small fw-bold">Yurtdışı Banka Adı</label>
+                                    <input type="text" name="foreign_bank_name" class="form-control" placeholder="Örn: Deutsche Bank">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small fw-bold">SWIFT / BIC Kodu</label>
+                                    <input type="text" name="swift_code" class="form-control fw-bold" placeholder="Örn: DEUTDEDB...">
                                 </div>
                             </div>
                         </div>
@@ -264,12 +299,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         <div id="customer-history-section" class="mt-5 d-none">
             <hr class="border-3 border-dark my-4">
-            
             <div class="row mb-3">
                 <div class="col-md-6" id="official-balance-container"></div>
                 <div class="col-md-6" id="pending-balance-container"></div>
             </div>
-
             <h4 class="mb-3 text-secondary"><i class="fa fa-history"></i> Seçilen Carinin Son İşlemleri (Emirler)</h4>
             <div class="card shadow">
                 <div class="card-body p-0">
@@ -340,7 +373,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         function togglePaymentSource() {
             var source = document.getElementById('payment_source_simple').value;
             var bankDiv = document.getElementById('recipient_bank_div');
-            if (source === 'Havale/EFT') { bankDiv.classList.remove('d-none'); } else { bankDiv.classList.add('d-none'); }
+            var swiftDiv = document.getElementById('swift_div');
+
+            bankDiv.classList.add('d-none');
+            swiftDiv.classList.add('d-none');
+
+            if (source === 'Havale/EFT') {
+                bankDiv.classList.remove('d-none');
+            } else if (source === 'Yurtdışı Banka') {
+                swiftDiv.classList.remove('d-none');
+            }
         }
 
         function autoSelectDepartment() {
@@ -352,72 +394,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // --- GÜNCELLENEN MÜŞTERİ DETAY AJAX ---
         function fetchCustomerDetails() {
             var id = $('#customer_id').val(); 
             if(!id) { $('#customer-history-section').addClass('d-none'); return; }
-            
             $('#modal_customer_id').val(id);
             
             $.get('api-get-customer-details.php?id='+id, function(data){
-                // Bankaları Doldur
                 var bs = $('#bank_id').empty().append('<option value="">Seçiniz...</option>');
                 if(data.banks) {
                     $.each(data.banks, function(i,b){ bs.append('<option value="'+b.id+'">'+b.bank_name+' - '+b.iban+'</option>'); });
                 }
-
-                // 1. Resmi Bakiye Kartı
+                // (Bakiye ve tablo kodları aynı kalacak, yukarıdaki önceki cevapla aynı...)
                 var offBal = parseFloat(data.official_balance);
                 var offText = offBal < 0 ? 'BORÇLUYUZ' : 'ALACAKLIYIZ';
                 if(Math.abs(offBal) < 0.01) offText = 'DENK';
-                
-                var htmlOff = `
-                    <div class="balance-card bg-official shadow">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <small class="text-white-50">Resmi Bakiye (Faturalı)</small>
-                                <h4 class="mb-0 fw-bold">${offBal.toLocaleString('tr-TR', {minimumFractionDigits: 2})} ${data.currency}</h4>
-                                <small>${offText}</small>
-                            </div>
-                            <i class="fa fa-file-invoice fa-2x opacity-50"></i>
-                        </div>
-                    </div>`;
+                var htmlOff = `<div class="balance-card bg-official shadow"><div class="d-flex justify-content-between align-items-center"><div><small class="text-white-50">Resmi Bakiye (Faturalı)</small><h4 class="mb-0 fw-bold">${offBal.toLocaleString('tr-TR', {minimumFractionDigits: 2})} ${data.currency}</h4><small>${offText}</small></div><i class="fa fa-file-invoice fa-2x opacity-50"></i></div></div>`;
                 $('#official-balance-container').html(htmlOff);
 
-                // 2. Bekleyen Bakiye Kartı
                 var penBal = parseFloat(data.pending_balance);
                 var penText = penBal < 0 ? 'Fatura Bekleyen (Gider)' : 'Fatura Kesilecek (Gelir)';
                 if(Math.abs(penBal) < 0.01) penText = '-';
-
-                var htmlPen = `
-                    <div class="balance-card bg-pending shadow">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <small class="text-dark-50">Bekleyen (Faturasız)</small>
-                                <h4 class="mb-0 fw-bold text-dark">${penBal.toLocaleString('tr-TR', {minimumFractionDigits: 2})} ${data.currency}</h4>
-                                <small class="text-dark">${penText}</small>
-                            </div>
-                            <i class="fa fa-clock fa-2x text-dark opacity-50"></i>
-                        </div>
-                    </div>`;
+                var htmlPen = `<div class="balance-card bg-pending shadow"><div class="d-flex justify-content-between align-items-center"><div><small class="text-dark-50">Bekleyen (Faturasız)</small><h4 class="mb-0 fw-bold text-dark">${penBal.toLocaleString('tr-TR', {minimumFractionDigits: 2})} ${data.currency}</h4><small class="text-dark">${penText}</small></div><i class="fa fa-clock fa-2x text-dark opacity-50"></i></div></div>`;
                 $('#pending-balance-container').html(htmlPen);
 
-                // 3. Tablo (Sadece Emirler)
                 var tbody = $('#history-table-body').empty();
                 if(data.history && data.history.length > 0) {
                     $.each(data.history, function(i, h) {
                         var typeClass = h.type === 'debt' ? 'text-danger' : 'text-success';
-                        var row = `<tr>
-                            <td>${h.date}</td>
-                            <td class="${typeClass} fw-bold">${h.type_label}</td>
-                            <td>${h.description}</td>
-                            <td>${h.tour_code || '-'}</td>
-                            <td class="text-end fw-bold">${parseFloat(h.amount).toLocaleString('tr-TR', {minimumFractionDigits: 2})}</td>
-                        </tr>`;
+                        var row = `<tr><td>${h.date}</td><td class="${typeClass} fw-bold">${h.type_label}</td><td>${h.description}</td><td>${h.tour_code || '-'}</td><td class="text-end fw-bold">${parseFloat(h.amount).toLocaleString('tr-TR', {minimumFractionDigits: 2})}</td></tr>`;
                         tbody.append(row);
                     });
                 } else { tbody.append('<tr><td colspan="5" class="text-center text-muted">Kayıtlı emir bulunamadı.</td></tr>'); }
-                
                 $('#customer-history-section').removeClass('d-none');
             }, 'json');
         }
