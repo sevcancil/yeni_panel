@@ -170,20 +170,14 @@ if (file_exists($alerts_file)) {
             </li>
 
             <li>
+                <a href="company-cards.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'company-cards.php' ? 'active' : ''; ?>" title="Kart Listesi">
+                    <i class="fa fa-address-card"></i> <span>Kart Listesi</span>
+                </a>
+            </li>
+
+            <li>
                 <a href="payment-orders.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'payment-orders.php' ? 'active' : ''; ?>" title="Ödeme Emirleri">
                     <i class="fa fa-file-invoice"></i> <span>Ödeme Listesi</span>
-                </a>
-            </li>
-
-            <li>
-                <a href="payment-methods.php" class="nav-link" title="Ödeme Yöntemleri">
-                    <i class="fa fa-money-check-dollar"></i> <span>Ödeme Yöntemleri</span>
-                </a>
-            </li>
-
-            <li>
-                <a href="collection-channels.php" class="nav-link" title="Tahsilat Kanalları">
-                    <i class="fa fa-hand-holding-dollar"></i> <span>Tahsilat Kanalları</span>
                 </a>
             </li>
 
@@ -218,7 +212,19 @@ if (file_exists($alerts_file)) {
                     <a href="channels.php" class="nav-link text-danger <?php echo basename($_SERVER['PHP_SELF']) == 'channels.php' ? 'active' : ''; ?>" title="Kasa/Banka">
                         <i class="fa fa-wallet"></i> <span>Kasa/Banka</span>
                     </a>
-                </li>    
+                </li>
+                
+                <li>
+                <a href="payment-methods.php" class="nav-link text-danger <?php echo basename($_SERVER['PHP_SELF']) == 'payment-methods.php' ? 'active' : ''; ?>" title="Ödeme Kanalları">
+                    <i class="fa fa-money-check-dollar"></i> <span>Ödeme Kanalları</span>
+                </a>
+            </li>
+
+            <li>
+                <a href="collection-channels.php" class="nav-link text-danger <?php echo basename($_SERVER['PHP_SELF']) == 'collection-channels.php' ? 'active' : ''; ?>" title="Tahsilat Kanalları">
+                    <i class="fa fa-hand-holding-dollar"></i> <span>Tahsilat Kanalları</span>
+                </a>
+            </li>
                 
                 <li>
                     <a href="#" class="nav-link text-danger" title="Raporlar">

@@ -4,9 +4,14 @@ session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
 
-// Güvenlik: Sadece finans yetkisi veya admin
+// Oturum Kontrolü
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
+// YETKİ KONTROLÜ (Sadece Admin ve Muhasebe)
+if ($_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'muhasebe') {
+    header("Location: index.php?msg=no_permission");
+    exit;
+}
 $message = '';
 
 // --- İŞLEM 1: SİLME ---

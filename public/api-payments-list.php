@@ -23,6 +23,7 @@ try {
     $order_column_index = isset($_POST['order'][0]['column']) ? $_POST['order'][0]['column'] : 5;
     $order_dir = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : 'desc';
 
+    // Kolon indeks haritası
     $columns_map = [
         0 => 't.id', 1 => 't.payment_status', 2 => 't.id', 3 => 't.id', 
         4 => 't.doc_type', 5 => 't.date', 6 => 'd.name', 7 => 'c.company_name', 
@@ -57,21 +58,41 @@ try {
             
             if (!empty($colSearchVal)) {
                 switch ($colIdx) {
-                    case 1: // Durum Filtresi
-                        if ($colSearchVal == 'paid') $sql_base .= " AND t.payment_status = 'paid' ";
-                        elseif ($colSearchVal == 'unpaid') $sql_base .= " AND t.payment_status = 'unpaid' ";
-                        elseif ($colSearchVal == 'partial') $sql_base .= " AND t.payment_status != 'paid' AND (SELECT SUM(amount) FROM transactions WHERE parent_id = t.id AND (type='payment_out' OR type='payment_in') AND is_deleted = 0) > 0 ";
+                    // --- 1. SÜTUN: DURUM FİLTRELERİ ---
+                    case 1: 
+                        if ($colSearchVal == 'paid') {
+                            $sql_base .= " AND t.payment_status = 'paid' ";
+                        } 
+                        elseif ($colSearchVal == 'unpaid') {
+                            $sql_base .= " AND t.payment_status = 'unpaid' ";
+                        } 
+                        elseif ($colSearchVal == 'partial') {
+                            $sql_base .= " AND t.payment_status != 'paid' AND (SELECT SUM(amount) FROM transactions WHERE parent_id = t.id AND (type='payment_out' OR type='payment_in') AND is_deleted = 0) > 0 ";
+                        } 
+                        // YENİ FİLTRELER BURADA
+                        elseif ($colSearchVal == 'issued') {
+                            $sql_base .= " AND t.invoice_status = 'issued' ";
+                        } 
+                        elseif ($colSearchVal == 'missing_invoice') {
+                            // Ödemesi bitmiş (paid) ama faturası girilmemiş (pending/waiting)
+                            $sql_base .= " AND t.payment_status = 'paid' AND t.invoice_status != 'issued' ";
+                        }
+                        elseif ($colSearchVal == 'to_be_issued') {
+                            // Fatura Kesilecek statüsü
+                            $sql_base .= " AND t.invoice_status = 'to_be_issued' ";
+                        }
                         break;
-                    case 2: // İşlem Durumları
+
+                    case 2: // Onay/Kontrol
                         if ($colSearchVal == 'approved') $sql_base .= " AND t.is_approved = 1 ";
                         elseif ($colSearchVal == 'priority') $sql_base .= " AND t.is_priority = 1 ";
                         elseif ($colSearchVal == 'control') $sql_base .= " AND t.needs_control = 1 ";
                         break;
                     case 3: $sql_base .= " AND t.id LIKE :col_id "; $column_searches[':col_id'] = "%$colSearchVal%"; break;
                     case 4: $sql_base .= " AND t.doc_type = :col_doc "; $column_searches[':col_doc'] = $colSearchVal; break;
-                    // --- TARİH FİLTRESİ (GÜNCELLENDİ) ---
+                    
+                    // --- 5. SÜTUN: TARİH ARALIĞI ---
                     case 5:
-                        // Gelen veri formatı: "2023-01-01|2023-01-31" (Pipe ile ayrılmış)
                         if (strpos($colSearchVal, '|') !== false) {
                             $dates = explode('|', $colSearchVal);
                             $startDate = $dates[0] ?? '';
@@ -89,11 +110,11 @@ try {
                                 $column_searches[':end_date'] = $endDate;
                             }
                         } else {
-                            // Eski usül tek tarih araması (Yedek)
                             $sql_base .= " AND t.date LIKE :col_date "; 
                             $column_searches[':col_date'] = "%$colSearchVal%"; 
                         }
                         break;
+
                     case 6: $sql_base .= " AND d.name LIKE :col_dept "; $column_searches[':col_dept'] = "%$colSearchVal%"; break;
                     case 7: $sql_base .= " AND c.company_name LIKE :col_cust "; $column_searches[':col_cust'] = "%$colSearchVal%"; break;
                     case 8: $sql_base .= " AND tc.code LIKE :col_tour "; $column_searches[':col_tour'] = "%$colSearchVal%"; break;
@@ -113,7 +134,6 @@ try {
     $stmt->execute();
     $filtered_records = $stmt->fetchColumn();
 
-    // TOTAL PAID HESAPLAMASI
     $sql = "SELECT t.*, 
             (SELECT COALESCE(SUM(amount),0) FROM transactions 
              WHERE parent_id = t.id 
@@ -134,31 +154,33 @@ try {
 
     $response_data = [];
     foreach ($data as $row) {
-        
         $amount = (float)$row['amount'];
         $paid = (float)$row['total_paid'];
         $remaining = $amount - $paid;
-        
-        // Silinme Kontrolü
         $is_deleted = isset($row['is_deleted']) && $row['is_deleted'] == 1;
 
-        // Renklendirme ve Durum
         $row_class = '';
         $status_badge = '';
 
         if ($is_deleted) {
             $row_class = 'table-danger text-decoration-line-through text-muted';
             $status_badge = '<span class="badge bg-danger d-block">İPTAL EDİLDİ</span>';
-        } 
-        else {
+        } else {
             if ($remaining <= 0.05) {
-                $row_class = 'table-light text-muted';
-                $status_badge = '<span class="badge bg-primary d-block">Tamamlandı</span>';
+                // TAMAMLANDI ama Fatura Durumuna Göre Renk Verelim
+                if ($row['invoice_status'] == 'issued') {
+                    $row_class = 'table-light text-muted';
+                    $status_badge = '<span class="badge bg-success d-block">Tamamlandı (Faturalı)</span>';
+                } else {
+                    // Ödeme Tamam ama Fatura Yoksa Uyarı Ver
+                    $row_class = 'table-warning'; 
+                    $status_badge = '<span class="badge bg-warning text-dark d-block">(!) Ödendi / Faturasız</span>';
+                }
             } else {
                 if ($row['doc_type'] == 'payment_order') {
-                    $row_class = 'table-danger bg-opacity-10'; // Kırmızı (Gider)
+                    $row_class = 'table-danger bg-opacity-10'; 
                 } elseif ($row['doc_type'] == 'invoice_order') {
-                    $row_class = 'table-success bg-opacity-10'; // Yeşil (Gelir)
+                    $row_class = 'table-success bg-opacity-10'; 
                 }
                 
                 if (date('Y-m-d', strtotime($row['date'])) < date('Y-m-d')) {
@@ -175,10 +197,7 @@ try {
             }
         }
 
-        // Tutar Görünümü ve ETİKET DÜZELTMESİ (BURASI DEĞİŞTİ)
         $main_amount_display = number_format($amount, 2, ',', '.') . ' ₺';
-        
-        // Etiket Belirleme: Gelir ise "Tahsil Edilen", Gider ise "Ödenen"
         $paid_label = ($row['doc_type'] == 'invoice_order') ? 'Tahsil Edilen' : 'Ödenen';
 
         if ($paid > 0 && !$is_deleted) {
@@ -187,7 +206,6 @@ try {
             $paid_icon = ($remaining <= 0.05) ? '<i class="fa fa-check-double"></i>' : '<i class="fa fa-check"></i>';
             $rem_html = ($remaining > 0.05) ? '<br><small class="text-danger fw-bold">Kalan: ' . $rem_display . '</small>' : '';
             
-            // Etiket burada kullanılıyor
             $tl_amt_html = '<div class="d-flex flex-column align-items-end">
                                 <span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span>
                                 <small class="text-success" style="font-size:0.75rem;">' . $paid_icon . ' ' . $paid_label . ': ' . $paid_display . '</small>' . $rem_html . '
@@ -196,7 +214,6 @@ try {
             $tl_amt_html = '<span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span>';
         }
 
-        // Butonlar
         $app_active = $row['is_approved'] ? 'active approval' : '';
         $prio_active = $row['is_priority'] ? 'active priority' : '';
         $cont_active = $row['needs_control'] ? 'active control' : '';

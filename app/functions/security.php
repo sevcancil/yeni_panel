@@ -119,4 +119,21 @@ function check_auto_postpone($pdo) {
 if (isset($GLOBALS['pdo'])) {
     check_auto_postpone($GLOBALS['pdo']);
 }
+
+// Sabit bir şifreleme anahtarı (Bunu sunucuda .env dosyasında saklamak daha güvenlidir ama şimdilik burada tanımlıyoruz)
+define('ENCRYPTION_KEY', 'pire2Thor41!!'); 
+define('ENCRYPTION_METHOD', 'AES-256-CBC');
+
+function encrypt_data($data) {
+    $key = hash('sha256', ENCRYPTION_KEY);
+    $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length(ENCRYPTION_METHOD));
+    $encrypted = openssl_encrypt($data, ENCRYPTION_METHOD, $key, 0, $iv);
+    return base64_encode($encrypted . '::' . $iv);
+}
+
+function decrypt_data($data) {
+    $key = hash('sha256', ENCRYPTION_KEY);
+    list($encrypted_data, $iv) = explode('::', base64_decode($data), 2);
+    return openssl_decrypt($encrypted_data, ENCRYPTION_METHOD, $key, 0, $iv);
+}
 ?>

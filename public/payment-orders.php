@@ -18,24 +18,18 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
         .filter-input, .filter-select { width: 100%; padding: 3px; font-size: 0.8rem; border: 1px solid #ced4da; border-radius: 3px; }
         .dt-control { cursor: pointer; text-align: center; vertical-align: middle; color: #0d6efd; }
         .dt-control:hover { color: #0a58ca; }
-        
         .action-icon { color: #d1d1d1; transition: all 0.2s ease-in-out; font-size: 1.2rem; cursor: pointer; }
         .action-icon:hover { transform: scale(1.3); color: #888; }
-        
         .action-icon.active.approval { color: #198754 !important; }
         .action-icon.active.priority { color: #dc3545 !important; } 
         .action-icon.active.control  { color: #fd7e14 !important; }
-        
         .fa-file-invoice.text-primary { color: #0d6efd !important; } 
         .fa-file-invoice.text-success { color: #198754 !important; } 
-
         .disabled-btn { opacity: 0.2; cursor: not-allowed; pointer-events: none; }
         #selection-bar { position: fixed; bottom: -100px; left: 0; width: 100%; background-color: #343a40; color: white; padding: 15px 40px; z-index: 1050; transition: bottom 0.3s; display: flex; justify-content: space-between; align-items: center; }
         #selection-bar.show { bottom: 0; }
         th { font-size: 0.9rem; white-space: nowrap; }
         td { font-size: 0.9rem; vertical-align: middle; }
-        
-        /* Tarih Aralığı Stili */
         .date-range-container input { font-size: 0.75rem; padding: 2px 4px; }
     </style>
 </head>
@@ -63,15 +57,30 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                             </tr>
                             <tr class="filters">
                                 <td></td> 
-                                <td><select class="filter-select" data-col-index="1"><option value="">Tümü</option><option value="paid">Tamamlandı</option><option value="unpaid">Planlandı</option><option value="partial">Kısmi</option></select></td> 
+                                <td>
+                                    <select class="filter-select fw-bold text-dark" data-col-index="1">
+                                        <option value="">Tümü</option>
+                                        <optgroup label="Ödeme Durumu">
+                                            <option value="paid">Ödemesi Tamam</option>
+                                            <option value="unpaid">Ödeme Bekliyor</option>
+                                            <option value="partial">Kısmi Ödeme</option>
+                                        </optgroup>
+                                        <optgroup label="Fatura Durumu (Kritik)">
+                                            <option value="missing_invoice" class="text-danger fw-bold">(!) Ödendi / Fatura Yok</option>
+                                            <option value="issued" class="text-success">Faturalaştı</option>
+                                            <option value="to_be_issued">Fatura Kesilecek</option>
+                                        </optgroup>
+                                    </select>
+                                </td> 
+                                
                                 <td><select class="filter-select" data-col-index="2"><option value="">Filtrele...</option><option value="approved">Onaylılar</option><option value="priority">Öncelikliler</option><option value="control">Kontrol Gereken</option></select></td> 
                                 <td><input type="text" class="filter-input" placeholder="ID" data-col-index="3"></td>
-                                <td><select class="filter-select" data-col-index="4"><option value="">Tümü</option><option value="invoice_order">Fatura</option><option value="payment_order">Ödeme</option></select></td>
+                                <td><select class="filter-select" data-col-index="4"><option value="">Tümü</option><option value="invoice_order">Fatura (Gelir)</option><option value="payment_order">Ödeme (Gider)</option></select></td>
                                 
                                 <td>
                                     <div class="d-flex flex-column gap-1 date-range-container">
-                                        <input type="date" class="form-control form-control-sm date-filter" id="date_start" placeholder="Başlangıç" title="Başlangıç Tarihi">
-                                        <input type="date" class="form-control form-control-sm date-filter" id="date_end" placeholder="Bitiş" title="Bitiş Tarihi">
+                                        <input type="date" class="form-control form-control-sm date-filter" id="date_start" placeholder="Başlangıç">
+                                        <input type="date" class="form-control form-control-sm date-filter" id="date_end" placeholder="Bitiş">
                                     </div>
                                 </td>
 
@@ -134,6 +143,7 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
+        // ... (Javascript kodları aynı kalacak, yukarıdaki filtreyi HTML olarak değiştirdik)
         function format(d) {
             var idHtml = d[3]; 
             var id = idHtml.match(/data-id="(\d+)"/) ? idHtml.match(/data-id="(\d+)"/)[1] : idHtml.replace(/[^0-9]/g, '');
@@ -158,7 +168,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 initComplete: function () {
                     var api = this.api();
                     
-                    // Standart Text Filtreleri
                     $('.filter-input, .filter-select').each(function () {
                         var $el = $(this);
                         $el.off('keyup change').on('keyup change', function (e) {
@@ -168,16 +177,11 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                         });
                     });
 
-                    // TARİH ARALIĞI FİLTRESİ
+                    // Tarih Aralığı
                     $('.date-filter').on('change', function() {
                         var start = $('#date_start').val();
                         var end = $('#date_end').val();
-                        
-                        // İki tarihi '|' ile birleştirip gönderiyoruz.
-                        // Backend bu formatı ayırıp (explode) BETWEEN sorgusu yapacak.
                         var searchVal = start + '|' + end;
-                        
-                        // 5. Kolon (Tarih) için arama yap
                         api.column(5).search(searchVal).draw();
                     });
                 }
@@ -192,15 +196,22 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // --- FATURA MODAL ---
+        // Fatura Modal
         var invoiceModal = new bootstrap.Modal(document.getElementById('invoiceModal'));
-
         function openInvoiceModal(data) {
             document.getElementById('inv_trans_id').value = data.id;
             document.getElementById('inv_company').innerText = $(data.company_name).text() || data.company_name;
             document.getElementById('inv_id').innerText = '#' + data.id;
-            var tempDiv = document.createElement("div"); tempDiv.innerHTML = data.amount;
-            document.getElementById('inv_amount').innerText = tempDiv.textContent || tempDiv.innerText || "";
+            
+            var amountText = "";
+            // Döviz ise doğru göster
+            if(data.original_amount && parseFloat(data.original_amount) > 0 && data.currency != 'TRY') {
+                amountText = data.original_amount + ' ' + data.currency;
+            } else {
+                amountText = data.amount + ' TL'; // Basit gösterim, detay JS'te daha karmaşık yapılabilir
+            }
+            
+            document.getElementById('inv_amount').innerText = amountText;
             document.getElementById('inv_no_input').value = data.invoice_no || '';
             invoiceModal.show();
         }
@@ -224,7 +235,7 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // Diğer fonksiyonlar
+        // Diğer
         function deleteTransaction(id) {
             Swal.fire({ title: 'Silinsin mi?', text: "Bu işlem geri alınamaz!", icon: 'warning', showCancelButton: true, confirmButtonText: 'Evet, Sil' }).then((result) => {
                 if (result.isConfirmed) {

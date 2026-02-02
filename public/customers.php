@@ -9,6 +9,12 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
+// Loglama için aktif kullanıcının adını çekelim
+$current_user_id = $_SESSION['user_id'];
+$stmtUser = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
+$stmtUser->execute([$current_user_id]);
+$current_user_name = $stmtUser->fetchColumn() ?: 'Kullanıcı';
+
 $message = '';
 
 // --- İŞLEM 1: SİLME ---
@@ -28,7 +34,8 @@ if (isset($_GET['delete_id'])) {
         } else {
             $stmt = $pdo->prepare("DELETE FROM customers WHERE id = ?");
             $stmt->execute([$del_id]);
-            log_action($pdo, 'customer', $del_id, 'delete', "$del_name carisi silindi.");
+            // Silen kişiyi loga ekle
+            log_action($pdo, 'customer', $del_id, 'delete', "$del_name carisi silindi. (Silen: $current_user_name)");
             header("Location: customers.php?msg=deleted");
             exit;
         }
@@ -125,7 +132,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $type, $code, $title, $contact, $tc, $passport, $tax_office, $tax_number,
                 $email, $phone, $fax, $country, $city, $address, $edit_id
             ]);
-            log_action($pdo, 'customer', $edit_id, 'update', "$title carisi güncellendi.");
+            
+            // LOGLAMA (Güncelleyen Kişiyle)
+            log_action($pdo, 'customer', $edit_id, 'update', "$title carisi güncellendi. (Düzenleyen: $current_user_name)");
             $message = '<div class="alert alert-success">Cari kart güncellendi!</div>';
         } else {
             // YENİ EKLEME
@@ -149,7 +158,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             
             $last_id = $pdo->lastInsertId();
-            log_action($pdo, 'customer', $last_id, 'create', "$title ($code) yeni cari kartı oluşturuldu.");
+            
+            // LOGLAMA (Oluşturan Kişiyle)
+            log_action($pdo, 'customer', $last_id, 'create', "$title ($code) yeni cari kartı oluşturuldu. (Oluşturan: $current_user_name)");
             $message = '<div class="alert alert-success">Yeni cari kart oluşturuldu!</div>';
         }
     } elseif (empty($title)) {
@@ -157,12 +168,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// --- LİSTELEME VE ARAMA MANTIĞI (YENİLENDİ) ---
+// --- LİSTELEME VE ARAMA MANTIĞI ---
 $search = isset($_GET['q']) ? trim($_GET['q']) : '';
 $params = [];
 
-// Canlı Bakiye Sorgusu:
-// Açılış Bakiyesi + (Toplam Tahsilat - Toplam Ödeme)
 $sql = "SELECT c.*, 
         (SELECT COUNT(*) FROM transactions WHERE customer_id = c.id) as tx_count,
         (
@@ -192,8 +201,16 @@ $customers = $stmt->fetchAll();
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         .missing-info {
-            background-color: #fff3cd; /* Sarımsı arka plan */
+            background-color: #fff3cd; 
             border-left: 5px solid #ffc107;
+        }
+        /* Tıklanabilir satır efekti */
+        .clickable-row {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .clickable-row:hover {
+            background-color: #f1f3f5 !important;
         }
     </style>
 </head>
@@ -263,7 +280,7 @@ $customers = $stmt->fetchAll();
                                         $bal_color = ($bal_val < 0) ? 'text-danger' : (($bal_val > 0) ? 'text-success' : 'text-muted');
                                     ?>
 
-                                    <tr class="<?php echo $row_class; ?>">
+                                    <tr class="<?php echo $row_class; ?> clickable-row" onclick="window.location.href='customer-details.php?id=<?php echo $c['id']; ?>'">
                                         <td><span class="badge bg-secondary"><?php echo guvenli_html($c['customer_code']); ?></span></td>
                                         <td>
                                             <?php if($c['customer_type'] == 'real'): ?>
@@ -290,17 +307,17 @@ $customers = $stmt->fetchAll();
                                         </td>
                                         
                                         <td class="text-center">
-                                            <button type="button" class="btn btn-sm btn-secondary" onclick="showHistory(<?php echo $c['id']; ?>, '<?php echo guvenli_html($c['company_name']); ?>')" title="Geçmiş">
+                                            <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); showHistory(<?php echo $c['id']; ?>, '<?php echo guvenli_html($c['company_name']); ?>')" title="Geçmiş">
                                                 <i class="fa fa-history"></i>
                                             </button>
-                                            <button type="button" class="btn btn-sm btn-primary" onclick='openModal("edit", <?php echo json_encode($c); ?>)' title="Düzenle">
+                                            <button type="button" class="btn btn-sm btn-primary" onclick='event.stopPropagation(); openModal("edit", <?php echo json_encode($c); ?>)' title="Düzenle">
                                                 <i class="fa fa-edit"></i>
                                             </button>
-                                            <a href="customer-details.php?id=<?php echo $c['id']; ?>" class="btn btn-sm btn-info text-white" title="Ekstre">
+                                            <a href="customer-details.php?id=<?php echo $c['id']; ?>" class="btn btn-sm btn-info text-white" onclick="event.stopPropagation();" title="Ekstre">
                                                 <i class="fa fa-list"></i>
                                             </a>
                                             <?php if(has_permission('delete_data')): ?>
-                                                <a href="customers.php?delete_id=<?php echo $c['id']; ?>" class="btn btn-sm btn-danger" onclick="return confirm('Silmek istediğinize emin misiniz?');">
+                                                <a href="customers.php?delete_id=<?php echo $c['id']; ?>" class="btn btn-sm btn-danger" onclick="event.stopPropagation(); return confirm('Silmek istediğinize emin misiniz?');">
                                                     <i class="fa fa-trash"></i>
                                                 </a>
                                             <?php endif; ?>
@@ -621,7 +638,6 @@ $customers = $stmt->fetchAll();
                 document.getElementById('city').value = data.city;
                 document.getElementById('address').value = data.address;
                 
-                // YETKİ KONTROLÜ: EĞER ALANLAR VARSA DOLDUR (YOKSA HATA VERMEZ)
                 if(document.getElementById('opening_balance')) {
                     document.getElementById('opening_balance').value = data.opening_balance;
                     document.getElementById('opening_balance_currency').value = data.opening_balance_currency;

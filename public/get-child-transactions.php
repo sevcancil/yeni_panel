@@ -10,12 +10,11 @@ $parent_id = isset($_GET['parent_id']) ? (int)$_GET['parent_id'] : 0;
 
 if (!$parent_id) { echo "ID Hatası"; exit; }
 
-// 1. ÖNCE ANA İŞLEMİ (PARENT) ÇEK (Fatura butonu ve İptal durumu için gerekli)
+// 1. ÖNCE ANA İŞLEMİ (PARENT) ÇEK
 $stmtParent = $pdo->prepare("SELECT t.*, c.company_name FROM transactions t LEFT JOIN customers c ON t.customer_id = c.id WHERE t.id = ?");
 $stmtParent->execute([$parent_id]);
 $parent = $stmtParent->fetch(PDO::FETCH_ASSOC);
 
-// Parent verisini JS'e göndermek için JSON'a çevir
 $parent_json = htmlspecialchars(json_encode($parent), ENT_QUOTES, 'UTF-8');
 
 // 2. BAĞLI ALT İŞLEMLERİ ÇEK
@@ -32,12 +31,10 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute([$parent_id]);
 $children = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// İKON BELİRLEME (Gider/Gelir için)
 $invoice_btn_text = ($parent['doc_type'] == 'invoice_order') ? 'Fatura Kes/Yükle' : 'Gelen Faturayı İşle';
 $invoice_btn_class = empty($parent['invoice_no']) ? 'btn-outline-dark' : 'btn-success text-white';
 $invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check-double';
 
-// --- İPTAL UYARISI (ANA İŞLEM SİLİNMİŞSE) ---
 if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
     echo '<div class="alert alert-danger fw-bold text-center m-2"><i class="fa fa-ban"></i> BU İŞLEM İPTAL EDİLMİŞTİR!</div>';
 }
@@ -64,7 +61,6 @@ if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
                     $style_class = ""; $icon = ""; $type_text = "";
                     $is_child_deleted = isset($child['is_deleted']) && $child['is_deleted'] == 1;
 
-                    // TİP BELİRLEME
                     if ($child['type'] == 'payment_out') {
                         $style_class = "table-danger bg-opacity-10"; 
                         $icon = '<i class="fa fa-arrow-up text-danger"></i>';
@@ -81,7 +77,6 @@ if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
                         $type_text = "İşlem";
                     }
 
-                    // SİLİNMİŞSE STİLİ EZ (Üzerini çiz ve kırmızı yap)
                     if ($is_child_deleted) {
                         $style_class = "table-secondary text-decoration-line-through text-muted";
                         $type_text .= " (İPTAL)";
@@ -109,18 +104,57 @@ if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
                             else echo '-';
                         ?>
                     </td>
+                    
                     <td class="text-end fw-bold">
                         <?php 
-                            // Fatura logu ise veya işlem silinmişse parantez içinde göster
-                            if ($child['type'] == 'invoice_log' || $is_child_deleted) {
-                                // original_amount yoksa amount kullan
-                                $amt = ($child['original_amount'] > 0) ? $child['original_amount'] : $child['amount'];
-                                echo '<span class="text-muted">(' . number_format($amt, 2, ',', '.') . ' ' . $child['currency'] . ')</span>';
+                            $show_curr = $child['currency'];
+                            $final_original_amount = 0;
+                            $final_tl_amount = 0;
+
+                            // 1. Dövizli İşlem mi?
+                            if ($show_curr != 'TRY') {
+                                if ($child['original_amount'] > 0) {
+                                    // Veritabanında kayıtlıysa onu kullan
+                                    $final_original_amount = $child['original_amount'];
+                                } else {
+                                    // Kayıtlı değilse hesaplamaya çalış
+                                    $rate_to_use = $child['exchange_rate'];
+                                    
+                                    // EĞER Child Kur 1 ise ama Parent Kur doğruysa, PARENT KURU KULLAN (ÇÖZÜM BURADA)
+                                    if ($rate_to_use <= 1.01 && $parent['currency'] == $show_curr && $parent['exchange_rate'] > 1) {
+                                        $rate_to_use = $parent['exchange_rate'];
+                                    }
+
+                                    if ($rate_to_use > 0) {
+                                        $final_original_amount = $child['amount'] / $rate_to_use;
+                                    } else {
+                                        $final_original_amount = $child['amount'];
+                                    }
+                                }
+                                $final_tl_amount = $child['amount']; // Altına yazılacak TL karşılığı
                             } else {
-                                echo number_format($child['amount'], 2, ',', '.') . ' ' . $child['currency'];
+                                // TL İşlem
+                                $final_original_amount = $child['amount'];
+                                $show_curr = 'TL';
+                            }
+
+                            // Ekrana Yazdırma
+                            $display_text = number_format($final_original_amount, 2, ',', '.') . ' ' . $show_curr;
+
+                            // Fatura veya silinmişse parantez içine al
+                            if ($child['type'] == 'invoice' || $child['type'] == 'invoice_log' || $is_child_deleted) {
+                                echo '<span class="text-muted">(' . $display_text . ')</span>';
+                            } else {
+                                echo $display_text;
+                            }
+
+                            // Dövizse altına TL karşılığını ekle
+                            if ($show_curr != 'TL' && $final_tl_amount > 0) {
+                                echo '<div class="text-muted fw-normal" style="font-size:0.7rem">(' . number_format($final_tl_amount, 2, ',', '.') . ' TL)</div>';
                             }
                         ?>
                     </td>
+
                     <td class="small text-muted"><?php echo guvenli_html($child['user_name']); ?></td>
                     <td class="text-center"><?php echo $file_link; ?></td>
                 </tr>
@@ -131,11 +165,9 @@ if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
     
     <?php if(!isset($parent['is_deleted']) || $parent['is_deleted'] == 0): ?>
     <div class="d-flex justify-content-end mt-2 gap-2">
-        
         <button class="btn btn-sm <?php echo $invoice_btn_class; ?> shadow-sm" onclick='openInvoiceModal(<?php echo $parent_json; ?>)'>
             <i class="fa <?php echo $invoice_btn_icon; ?>"></i> <?php echo $invoice_btn_text; ?>
         </button>
-
         <a href="transaction-add-child.php?parent_id=<?php echo $parent_id; ?>" class="btn btn-sm btn-primary shadow-sm">
             <i class="fa fa-plus"></i> Yeni Hareket Ekle
         </a>

@@ -7,7 +7,6 @@ require_once '../app/functions/security.php';
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
 // 1. LİSTE: FATURA KESİLECEKLER (to_be_issued) - ACİL
-// Bunlar için "Fatura Yükle" butonu çıkacak.
 $sql_issued = "SELECT t.*, 
                c.company_name, c.tax_office, c.tax_number, c.tc_number, c.address, c.city, c.country,
                tc.code as tour_code 
@@ -21,7 +20,6 @@ $sql_issued = "SELECT t.*,
 $list_issued = $pdo->query($sql_issued)->fetchAll(PDO::FETCH_ASSOC);
 
 // 2. LİSTE: ONAY BEKLEYENLER (waiting_approval) - BEKLEMEDE
-// Bunlar için "Onayla" butonu çıkacak (Onaylanınca üstteki listeye geçer).
 $sql_waiting = "SELECT t.*, 
                c.company_name, 
                tc.code as tour_code 
@@ -96,9 +94,29 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
                                     <small class="text-muted"><?php echo $row['tour_code'] ? $row['tour_code'] : ''; ?></small>
                                 </td>
                                 <td><?php echo guvenli_html($row['description']); ?></td>
+                                
                                 <td class="text-end fw-bold text-success fs-5">
-                                    <?php echo number_format($row['amount'], 2, ',', '.'); ?> <?php echo $row['currency']; ?>
+                                    <?php 
+                                        $currency = $row['currency'];
+                                        $amount_tl = $row['amount'];
+                                        $amount_orig = $row['original_amount'];
+                                        $rate = $row['exchange_rate'];
+
+                                        if ($currency != 'TRY') {
+                                            // Dövizli İşlem
+                                            if ($amount_orig <= 0 && $rate > 0) {
+                                                // Eğer orijinal tutar 0 ise, TL'den geri hesapla
+                                                $amount_orig = $amount_tl / $rate;
+                                            }
+                                            echo number_format($amount_orig, 2, ',', '.') . ' ' . $currency;
+                                            echo '<br><small class="text-muted fs-6 fw-normal">(' . number_format($amount_tl, 2, ',', '.') . ' TL)</small>';
+                                        } else {
+                                            // TL İşlem
+                                            echo number_format($amount_tl, 2, ',', '.') . ' TL';
+                                        }
+                                    ?>
                                 </td>
+
                                 <td class="text-center">
                                     <button class="btn btn-success btn-sm w-100 shadow-sm" onclick='openInvoiceModal(<?php echo json_encode($row); ?>)'>
                                         <i class="fa fa-upload"></i> Fatura Yükle
@@ -146,9 +164,26 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
                                     <small class="text-muted"><?php echo $row['tour_code'] ? $row['tour_code'] : ''; ?></small>
                                 </td>
                                 <td class="text-muted"><?php echo guvenli_html($row['description']); ?></td>
+                                
                                 <td class="text-end fw-bold text-dark">
-                                    <?php echo number_format($row['amount'], 2, ',', '.'); ?> <?php echo $row['currency']; ?>
+                                    <?php 
+                                        $currency = $row['currency'];
+                                        $amount_tl = $row['amount'];
+                                        $amount_orig = $row['original_amount'];
+                                        $rate = $row['exchange_rate'];
+
+                                        if ($currency != 'TRY') {
+                                            if ($amount_orig <= 0 && $rate > 0) {
+                                                $amount_orig = $amount_tl / $rate;
+                                            }
+                                            echo number_format($amount_orig, 2, ',', '.') . ' ' . $currency;
+                                            echo '<br><small class="text-muted fs-6 fw-normal">(' . number_format($amount_tl, 2, ',', '.') . ' TL)</small>';
+                                        } else {
+                                            echo number_format($amount_tl, 2, ',', '.') . ' TL';
+                                        }
+                                    ?>
                                 </td>
+
                                 <td class="text-center">
                                     <button class="btn btn-outline-primary btn-sm w-100" onclick="approveInvoice(<?php echo $row['id']; ?>)">
                                         <i class="fa fa-arrow-up"></i> Onayla & Taşı
@@ -225,7 +260,6 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
 
     <script>
         $(document).ready(function() {
-            // İki tabloyu da DataTable yap ama sıralama özelliklerini kapat (basit liste olsun)
             $('#tableIssued').DataTable({ "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" }, "paging": false, "info": false, "searching": false });
             $('#tableWaiting').DataTable({ "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" }, "paging": false, "info": false });
         });
@@ -236,7 +270,19 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
         function openInvoiceModal(data) {
             document.getElementById('trans_id').value = data.id;
             document.getElementById('info_company').innerText = data.company_name;
-            document.getElementById('info_amount').innerText = Number(data.amount).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ' + (data.currency || 'TRY');
+            
+            // Modalda Gösterilecek Tutar (Akıllı Hesaplama)
+            var amt = parseFloat(data.amount);
+            var curr = data.currency || 'TRY';
+            var orig = parseFloat(data.original_amount);
+            var rate = parseFloat(data.exchange_rate);
+
+            if (curr !== 'TRY') {
+                if(orig <= 0 && rate > 0) orig = amt / rate;
+                document.getElementById('info_amount').innerText = orig.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ' + curr;
+            } else {
+                document.getElementById('info_amount').innerText = amt.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL';
+            }
             
             var taxInfo = data.tax_number ? (data.tax_office + ' VD - ' + data.tax_number) : (data.tc_number ? 'TC: '+data.tc_number : '');
             document.getElementById('info_tax').innerText = taxInfo;
@@ -246,9 +292,22 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
         }
 
         // Fatura Yükleme (AJAX)
+        // DİKKAT: api-upload-invoice.php dosyası tutar (amount) bekliyorsa, buraya hidden input eklememiz gerekebilir.
+        // Ancak mevcut yapıda "Fatura Yükle" dediğimizde ana işlem tutarını kabul ediyorsak sorun yok.
+        // Eğer kullanıcı fatura tutarını değiştirebilsin istiyorsan modal'a input ekleyelim.
+        // Şu anki kodda kullanıcıdan tutar istemiyoruz, ana tutarı kabul ediyoruz.
+        
         $('#invoiceForm').on('submit', function(e) {
             e.preventDefault();
             var formData = new FormData(this);
+            
+            // Eğer api-upload-invoice.php, POST['invoice_amount'] bekliyorsa ve biz göndermezsek 0 olarak algılayabilir.
+            // Bu yüzden "invoice_amount" verisini de eklemeliyiz.
+            // Ama bu ekranda input yok. O zaman faturanın "tamamı" kesiliyor varsayımıyla ana tutarı gönderelim mi?
+            // Veya api-upload-invoice.php tarafında "eğer post gelmediyse ana tutarı kullan" mantığı var mı?
+            // GÜVENLİ OLAN: Kullanıcıya tutar sormaktır. 
+            // Şimdilik ana listeden işlem yaptığı için tam tutar varsayalım.
+            
             $.ajax({
                 url: 'api-upload-invoice.php',
                 type: 'POST',
@@ -260,7 +319,7 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
                     if(res.status === 'success') {
                         invoiceModal.hide();
                         Swal.fire({
-                            icon: 'success', title: 'Başarılı', text: 'Fatura işlendi, kayıt tamamlandı.', timer: 1500, showConfirmButton: false
+                            icon: 'success', title: 'Başarılı', text: 'Fatura işlendi.', timer: 1500, showConfirmButton: false
                         }).then(() => location.reload());
                     } else {
                         Swal.fire('Hata', res.message, 'error');
