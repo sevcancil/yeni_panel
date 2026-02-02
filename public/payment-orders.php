@@ -31,6 +31,10 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
         th { font-size: 0.9rem; white-space: nowrap; }
         td { font-size: 0.9rem; vertical-align: middle; }
         .date-range-container input { font-size: 0.75rem; padding: 2px 4px; }
+        
+        /* Grup Başlıklarını Belirginleştir */
+        optgroup { font-weight: bold; color: #555; background-color: #f8f9fa; }
+        option { color: #000; background-color: #fff; padding: 5px; }
     </style>
 </head>
 <body>
@@ -57,18 +61,26 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                             </tr>
                             <tr class="filters">
                                 <td></td> 
+                                
                                 <td>
-                                    <select class="filter-select fw-bold text-dark" data-col-index="1">
+                                    <select class="filter-select fw-bold text-dark" data-col-index="1" style="min-width: 150px;">
                                         <option value="">Tümü</option>
-                                        <optgroup label="Ödeme Durumu">
-                                            <option value="paid">Ödemesi Tamam</option>
-                                            <option value="unpaid">Ödeme Bekliyor</option>
-                                            <option value="partial">Kısmi Ödeme</option>
+                                        
+                                        <optgroup label="GELİR (TAHSİLAT) DURUMLARI">
+                                            <option value="income_invoice_paid">✅ Fatura Kesildi + Tahsil Edildi</option>
+                                            <option value="income_invoice_unpaid">⏳ Fatura Kesildi (Tahsilat Bekliyor)</option>
+                                            <option value="income_paid_no_invoice" class="text-danger fw-bold">(!) Tahsil Edildi / Faturasız</option>
                                         </optgroup>
-                                        <optgroup label="Fatura Durumu (Kritik)">
-                                            <option value="missing_invoice" class="text-danger fw-bold">(!) Ödendi / Fatura Yok</option>
-                                            <option value="issued" class="text-success">Faturalaştı</option>
-                                            <option value="to_be_issued">Fatura Kesilecek</option>
+
+                                        <optgroup label="GİDER (ÖDEME) DURUMLARI">
+                                            <option value="expense_invoice_paid">✅ Fatura Alındı + Ödendi</option>
+                                            <option value="expense_invoice_unpaid">⏳ Fatura Alındı (Ödeme Bekliyor)</option>
+                                            <option value="expense_paid_no_invoice" class="text-danger fw-bold">(!) Ödendi / Faturasız</option>
+                                        </optgroup>
+
+                                        <optgroup label="GENEL DURUMLAR">
+                                            <option value="partial">Kısmi Ödeme / Tahsilat</option>
+                                            <option value="planned">Planlandı (İşlem Yok)</option>
                                         </optgroup>
                                     </select>
                                 </td> 
@@ -143,7 +155,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
-        // ... (Javascript kodları aynı kalacak, yukarıdaki filtreyi HTML olarak değiştirdik)
         function format(d) {
             var idHtml = d[3]; 
             var id = idHtml.match(/data-id="(\d+)"/) ? idHtml.match(/data-id="(\d+)"/)[1] : idHtml.replace(/[^0-9]/g, '');
@@ -177,7 +188,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                         });
                     });
 
-                    // Tarih Aralığı
                     $('.date-filter').on('change', function() {
                         var start = $('#date_start').val();
                         var end = $('#date_end').val();
@@ -204,11 +214,10 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             document.getElementById('inv_id').innerText = '#' + data.id;
             
             var amountText = "";
-            // Döviz ise doğru göster
             if(data.original_amount && parseFloat(data.original_amount) > 0 && data.currency != 'TRY') {
                 amountText = data.original_amount + ' ' + data.currency;
             } else {
-                amountText = data.amount + ' TL'; // Basit gösterim, detay JS'te daha karmaşık yapılabilir
+                amountText = data.amount + ' TL'; 
             }
             
             document.getElementById('inv_amount').innerText = amountText;
@@ -235,7 +244,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // Diğer
         function deleteTransaction(id) {
             Swal.fire({ title: 'Silinsin mi?', text: "Bu işlem geri alınamaz!", icon: 'warning', showCancelButton: true, confirmButtonText: 'Evet, Sil' }).then((result) => {
                 if (result.isConfirmed) {

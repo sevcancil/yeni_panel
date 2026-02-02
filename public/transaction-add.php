@@ -6,13 +6,11 @@ require_once '../app/functions/security.php';
 
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
-// Kullanıcı adını çek (Log için)
 $user_id = $_SESSION['user_id'];
 $stmtUser = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
 $stmtUser->execute([$user_id]);
 $current_user_name = $stmtUser->fetchColumn();
 
-// Verileri Çek
 $departments = $pdo->query("SELECT * FROM departments ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $tours = $pdo->query("SELECT * FROM tour_codes WHERE status = 'active' ORDER BY code DESC")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -28,7 +26,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tour_code_id = !empty($_POST['tour_code_id']) ? $_POST['tour_code_id'] : null;
         $department_id = !empty($_POST['department_id']) ? $_POST['department_id'] : null;
 
-        // Tutar
         $amount = (float)$_POST['amount'];
         $currency = $_POST['currency'];
         $exchange_rate = (float)$_POST['exchange_rate'];
@@ -38,7 +35,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $amount = $amount * $exchange_rate;
         }
 
-        // Açıklama ve Kaynak İşlemleri
         $description = temizle($_POST['description']);
         $recipient_bank_id = null;
 
@@ -46,12 +42,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $simple_source = temizle($_POST['payment_source_simple']);
             
             if ($simple_source == 'Havale/EFT') {
-                // Yurt içi banka seçimi
                 $recipient_bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
                 $description .= " [Yöntem: Havale/EFT]";
             } 
             elseif ($simple_source == 'Yurtdışı Banka') {
-                // SWIFT Bilgilerini Açıklamaya Ekle
                 $swift_code = !empty($_POST['swift_code']) ? temizle($_POST['swift_code']) : '-';
                 $foreign_bank = !empty($_POST['foreign_bank_name']) ? temizle($_POST['foreign_bank_name']) : '-';
                 $description .= " [Transfer: Yurtdışı - Banka: $foreign_bank - SWIFT: $swift_code]";
@@ -61,11 +55,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Fatura Durumu
+        // Fatura Durumu ve Tarihi
         $invoice_status = 'pending';
+        $invoice_date = null; // Varsayılan boş
+
         if ($doc_type === 'invoice_order') {
             if (isset($_POST['issue_invoice_check'])) {
                 $invoice_status = 'to_be_issued'; 
+                
+                // Fatura Tarihi Kontrolü
+                if (!empty($_POST['invoice_issue_date'])) {
+                    $posted_inv_date = $_POST['invoice_issue_date'];
+                    // Geçmiş tarih kontrolü (Server tarafı güvenlik)
+                    if ($posted_inv_date < date('Y-m-d')) {
+                        throw new Exception("Fatura tarihi bugünden eski olamaz.");
+                    }
+                    $invoice_date = $posted_inv_date;
+                } else {
+                    $invoice_date = date('Y-m-d'); // Girilmezse bugün
+                }
+
             } else {
                 $invoice_status = 'waiting_approval';
             }
@@ -77,30 +86,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     customer_id, department_id, tour_code_id, type, doc_type, 
                     amount, currency, original_amount, exchange_rate, 
                     date, description, payment_status, invoice_status, 
-                    recipient_bank_id, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?)";
+                    invoice_date, recipient_bank_id, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?)";
         
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             $customer_id, $department_id, $tour_code_id, $type, $doc_type,
             $amount, $currency, $original_amount, $exchange_rate,
             $date, $description, $invoice_status, 
-            $recipient_bank_id, $user_id
+            $invoice_date, $recipient_bank_id, $user_id
         ]);
 
         $last_id = $pdo->lastInsertId();
         
-        // LOGLAMA
-        $current_user_name = $_SESSION['username'] ?? 'Kullanıcı'; 
-        
-        $log_amount_text = "";
-        if ($currency == 'TRY') {
-            $log_amount_text = number_format($amount, 2, ',', '.') . " TL";
-        } else {
-            $log_amount_text = number_format($original_amount, 2, ',', '.') . " " . $currency;
-        }
-
-        $log_desc = "$current_user_name tarafından yeni işlem oluşturuldu: $log_amount_text tutarında. Açıklama: $description";
+        $log_amount_text = ($currency == 'TRY') ? number_format($amount, 2, ',', '.') . " TL" : number_format($original_amount, 2, ',', '.') . " " . $currency;
+        $log_desc = "$current_user_name tarafından işlem oluşturuldu: $log_amount_text. ($description)";
 
         log_action($pdo, 'transaction', $last_id, 'create', $log_desc);
         
@@ -271,12 +271,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         <div id="collection_details_group" class="d-none">
                             <div class="alert alert-warning border-warning">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="issue_invoice_check" name="issue_invoice_check">
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" id="issue_invoice_check" name="issue_invoice_check" onchange="toggleInvoiceDate()">
                                     <label class="form-check-label fw-bold text-dark" for="issue_invoice_check">
                                         Fatura Kesilsin
                                     </label>
                                 </div>
+                                
+                                <div id="invoice_date_div" class="d-none mt-2">
+                                    <label class="form-label small fw-bold">Fatura Tarihi</label>
+                                    <input type="date" name="invoice_issue_date" class="form-control form-control-sm border-warning" min="<?php echo date('Y-m-d'); ?>" value="<?php echo date('Y-m-d'); ?>">
+                                    <small class="text-danger" style="font-size:0.7rem;">* Geçmiş tarih seçilemez.</small>
+                                </div>
+
                                 <hr class="my-2">
                                 <small class="text-muted">Seçilirse 'Fatura Kesilecek' olarak işaretlenir.</small>
                             </div>
@@ -304,18 +311,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="col-md-6" id="pending-balance-container"></div>
             </div>
             <h4 class="mb-3 text-secondary"><i class="fa fa-history"></i> Seçilen Carinin Son İşlemleri (Emirler)</h4>
-            <div class="card shadow">
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-striped table-hover mb-0">
-                            <thead class="table-dark">
-                                <tr><th>Tarih</th><th>Tür</th><th>Açıklama</th><th>Tur Kodu</th><th class="text-end">Tutar</th></tr>
-                            </thead>
-                            <tbody id="history-table-body"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
+            <div class="card shadow"><div class="card-body p-0"><div class="table-responsive"><table class="table table-striped table-hover mb-0"><thead class="table-dark"><tr><th>Tarih</th><th>Tür</th><th>Açıklama</th><th>Tur Kodu</th><th class="text-end">Tutar</th></tr></thead><tbody id="history-table-body"></tbody></table></div></div></div>
         </div>
     </div>
 
@@ -370,6 +366,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // YENİ FONKSİYON: Fatura Tarihi Alanını Aç/Kapa
+        function toggleInvoiceDate() {
+            var checkBox = document.getElementById('issue_invoice_check');
+            var dateDiv = document.getElementById('invoice_date_div');
+            if (checkBox.checked) {
+                dateDiv.classList.remove('d-none');
+            } else {
+                dateDiv.classList.add('d-none');
+            }
+        }
+
         function togglePaymentSource() {
             var source = document.getElementById('payment_source_simple').value;
             var bankDiv = document.getElementById('recipient_bank_div');
@@ -404,7 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if(data.banks) {
                     $.each(data.banks, function(i,b){ bs.append('<option value="'+b.id+'">'+b.bank_name+' - '+b.iban+'</option>'); });
                 }
-                // (Bakiye ve tablo kodları aynı kalacak, yukarıdaki önceki cevapla aynı...)
+                
                 var offBal = parseFloat(data.official_balance);
                 var offText = offBal < 0 ? 'BORÇLUYUZ' : 'ALACAKLIYIZ';
                 if(Math.abs(offBal) < 0.01) offText = 'DENK';

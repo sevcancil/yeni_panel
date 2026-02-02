@@ -14,7 +14,6 @@ $customer = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$customer) die("Cari bulunamadı.");
 
 // HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ ÇEK
-// Ana işlemin ödeme durumunu (parent_payment_status) da çekiyoruz ki Ticaret Hacmini doğru hesaplayalım.
 $sql = "SELECT t.*, 
                p.type as parent_type, 
                p.payment_status as parent_payment_status,
@@ -35,7 +34,6 @@ $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $official_balance = $customer['opening_balance']; 
 $pending_debt = 0;   
 $pending_credit = 0; 
-$closed_trade_volume = 0; // Kapanmış (Ödenmiş) Ticaret Hacmi
 
 $processed_rows = [];
 $running_balance = $customer['opening_balance']; 
@@ -56,13 +54,11 @@ foreach ($transactions as $row) {
 
     if ($is_deleted) {
         $effect_on_balance = 0;
-        // Silinenler bakiyeyi etkilemez
     } else {
         
-        // 1. ANA SİPARİŞLER (Sadece 'Tutar' sütunu)
+        // 1. ANA SİPARİŞLER
         if ($type == 'debt') {
             $col_siparis = $amount;
-            // Faturası yoksa bekleyen borçtur
             if ($row['invoice_status'] != 'issued') {
                 $pending_debt += $amount;
                 $is_pending_row = true;
@@ -70,46 +66,34 @@ foreach ($transactions as $row) {
         } 
         elseif ($type == 'credit') {
             $col_siparis = $amount;
-            // Faturası yoksa bekleyen alacaktır
             if ($row['invoice_status'] != 'issued') {
                 $pending_credit += $amount;
                 $is_pending_row = true;
             }
         }
 
-        // 2. FATURALAR (Sütun 3: TAHSİL EDİLDİ)
+        // 2. FATURALAR
         elseif ($type == 'invoice') {
-            
             if ($row['parent_type'] == 'debt') {
-                // GİDER FATURASI (Bize Borç Yazar) -> POZİTİF (+)
+                // GİDER FATURASI (+)
                 $col_fatura = $amount; 
                 $effect_on_balance = $amount; 
-                
-                // TİCARET HACMİ (Sadece Ödemesi Tamamlanmışsa)
-                if ($row['parent_payment_status'] == 'paid') {
-                    $closed_trade_volume -= $amount; // Gider olduğu için düşüyoruz
-                }
             } 
             elseif ($row['parent_type'] == 'credit') {
-                // GELİR FATURASI (Bize Alacak Yazar) -> NEGATİF (-)
+                // GELİR FATURASI (-)
                 $col_fatura = -$amount; 
                 $effect_on_balance = -$amount;
-                
-                // TİCARET HACMİ (Sadece Tahsilatı Tamamlanmışsa)
-                if ($row['parent_payment_status'] == 'paid') {
-                    $closed_trade_volume += $amount; // Gelir olduğu için ekliyoruz
-                }
             }
         }
 
-        // 3. PARA HAREKETLERİ (Sütun 2: ÖDENDİ)
+        // 3. PARA HAREKETLERİ
         elseif ($type == 'payment_out') {
-            // ÖDEME ÇIKIŞI (Borcu Kapatır) -> NEGATİF (-)
+            // ÖDEME ÇIKIŞI (-)
             $col_para = -$amount; 
             $effect_on_balance = -$amount;
         } 
         elseif ($type == 'payment_in') {
-            // TAHSİLAT GİRİŞİ (Alacağı Kapatır) -> POZİTİF (+)
+            // TAHSİLAT GİRİŞİ (+)
             $col_para = $amount; 
             $effect_on_balance = $amount;
         }
@@ -118,7 +102,6 @@ foreach ($transactions as $row) {
     $official_balance += $effect_on_balance;
     $running_balance += $effect_on_balance;
     
-    // Döviz Gösterimi (Fallback Mantığı ile)
     $orig_amt = ($row['original_amount'] > 0) ? $row['original_amount'] : $amount;
     $currency_display = ($row['currency'] != 'TRY') ? number_format($orig_amt, 2) . ' ' . $row['currency'] : '';
 
@@ -144,20 +127,8 @@ function getBalanceStyle($balance) {
 }
 
 $off_style = getBalanceStyle($official_balance);
-
-// Genel Risk: Resmi Bakiye + (Bekleyen Alacaklar - Bekleyen Borçlar)
-// Negatifler Alacak, Pozitifler Borç olduğu için:
-// Bekleyen Borç (+), Bekleyen Alacak (-) olarak düşünürsek:
-// Risk = Resmi + Bekleyen Borç - Bekleyen Alacak?
-// Hayır, Excel mantığında:
-// Alacaklar (-) eksi bakiye, Borçlar (+) artı bakiye.
-// O zaman Bekleyen Alacakları (-), Bekleyen Borçları (+) olarak ekleyeceğiz.
 $total_risk = $official_balance + $pending_debt - $pending_credit;
 $risk_style = getBalanceStyle($total_risk);
-
-// Ticaret Hacmi Renk
-$gain_style = ($closed_trade_volume >= 0) ? 'text-success' : 'text-danger';
-$gain_text = ($closed_trade_volume >= 0) ? '+' : '';
 
 ?>
 <!DOCTYPE html>
@@ -171,7 +142,7 @@ $gain_text = ($closed_trade_volume >= 0) ? '+' : '';
         .card-left-primary { border-left: 5px solid #0d6efd; }
         .card-left-warning { border-left: 5px solid #ffc107; }
         .card-left-success { border-left: 5px solid #198754; }
-        .card-left-info { border-left: 5px solid #0dcaf0; }
+        /* .card-left-info kaldırıldı çünkü 4. kart yok */
         
         .row-parent { background-color: #e9ecef !important; color: #495057; font-weight: 600; border-top: 3px solid #dee2e6; }
         .row-child { background-color: #fff !important; }
@@ -188,8 +159,8 @@ $gain_text = ($closed_trade_volume >= 0) ? '+' : '';
         .curr-sub { font-size: 0.75rem; color: #6c757d; font-weight: normal; display: block; }
         
         /* Renk Sınıfları */
-        .val-pos { color: #dc3545; } /* Pozitif (Borç) Kırmızı */
-        .val-neg { color: #198754; } /* Negatif (Alacak) Yeşil */
+        .val-pos { color: #dc3545; } 
+        .val-neg { color: #198754; } 
     </style>
 </head>
 <body class="bg-light">
@@ -214,7 +185,7 @@ $gain_text = ($closed_trade_volume >= 0) ? '+' : '';
         </div>
 
         <div class="row mb-4">
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <div class="card shadow h-100 card-left-primary">
                     <div class="card-body balance-box">
                         <div class="text-uppercase text-primary fw-bold text-xs mb-1">Resmi Bakiye</div>
@@ -223,7 +194,7 @@ $gain_text = ($closed_trade_volume >= 0) ? '+' : '';
                 </div>
             </div>
             
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <div class="card shadow h-100 card-left-warning">
                     <div class="card-body balance-box">
                         <div class="text-uppercase text-warning fw-bold text-xs mb-1">Fatura Bekleyen</div>
@@ -241,7 +212,7 @@ $gain_text = ($closed_trade_volume >= 0) ? '+' : '';
                 </div>
             </div>
 
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <div class="card shadow h-100 card-left-success">
                     <div class="card-body balance-box">
                         <div class="text-uppercase text-success fw-bold text-xs mb-1">Genel Toplam (Risk)</div>
@@ -250,19 +221,8 @@ $gain_text = ($closed_trade_volume >= 0) ? '+' : '';
                     </div>
                 </div>
             </div>
-
-            <div class="col-md-3">
-                <div class="card shadow h-100 card-left-info">
-                    <div class="card-body balance-box">
-                        <div class="text-uppercase text-info fw-bold text-xs mb-1">Ticaret Hacmi (Kapanmış)</div>
-                        <div class="h4 mb-0 fw-bold <?php echo $gain_style; ?>">
-                            <?php echo $gain_text . number_format($closed_trade_volume, 2, ',', '.'); ?> ₺
-                        </div>
-                        <small class="text-muted" style="font-size: 0.75rem;">(Ödemesi Tamamlanmış Kar/Zarar)</small>
-                    </div>
-                </div>
+            
             </div>
-        </div>
 
         <div class="card shadow mb-4">
             <div class="card-header py-3 bg-white">
@@ -314,7 +274,6 @@ $gain_text = ($closed_trade_volume >= 0) ? '+' : '';
                                 $desc_class = $p['is_child'] ? 'child-indent' : '';
                                 $indent_icon = $p['is_child'] ? '<i class="fa fa-level-up-alt fa-rotate-90 child-icon"></i>' : '';
                                 
-                                // Para ve Fatura Sütunları Renkleri
                                 $color_para = ($p['col_para'] < 0) ? 'text-danger' : 'text-success'; 
                                 $color_fatura = ($p['col_fatura'] > 0) ? 'text-danger' : 'text-success';
                             ?>

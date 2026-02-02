@@ -31,10 +31,50 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute([$parent_id]);
 $children = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$invoice_btn_text = ($parent['doc_type'] == 'invoice_order') ? 'Fatura Kes/Yükle' : 'Gelen Faturayı İşle';
-$invoice_btn_class = empty($parent['invoice_no']) ? 'btn-outline-dark' : 'btn-success text-white';
-$invoice_btn_icon = empty($parent['invoice_no']) ? 'fa-file-invoice' : 'fa-check-double';
+// --- YENİ: BAKİYE HESAPLAMA (BUTONU GİZLEMEK İÇİN) ---
+$total_paid = 0;
+foreach ($children as $child) {
+    // Sadece silinmemiş ödeme/tahsilat hareketlerini topla
+    if (!isset($child['is_deleted']) || $child['is_deleted'] == 0) {
+        if ($child['type'] == 'payment_in' || $child['type'] == 'payment_out') {
+            $total_paid += $child['amount'];
+        }
+    }
+}
+$remaining_balance = $parent['amount'] - $total_paid;
+// Eğer kalan tutar 0.05'ten küçükse (kuruş farklarını yoksay) işlem bitmiş demektir
+$is_transaction_completed = ($remaining_balance <= 0.05);
 
+
+// --- BUTON METİNLERİ, İKONLARI VE TAMAMLANMA MESAJI AYARLAMA ---
+
+// 1. Fatura Butonu Mantığı
+if (!empty($parent['invoice_no'])) {
+    $invoice_btn_text = 'Faturayı Düzenle';
+    $invoice_btn_class = 'btn-success text-white';
+    $invoice_btn_icon = 'fa-check-double';
+} else {
+    $invoice_btn_text = ($parent['doc_type'] == 'invoice_order') ? 'Fatura Kes/Yükle' : 'Gelen Faturayı İşle';
+    $invoice_btn_class = 'btn-outline-dark';
+    $invoice_btn_icon = 'fa-file-invoice';
+}
+
+// 2. Yeni Hareket (Öde/Tahsil Et) ve Tamamlanma Mesajı Mantığı
+$add_child_btn_text = 'Yeni Hareket Ekle';
+$add_child_btn_icon = 'fa-plus';
+$completion_text = 'İşlem Tamamlandı'; // Varsayılan
+
+if ($parent['type'] == 'debt' || $parent['doc_type'] == 'payment_order') {
+    $add_child_btn_text = 'Öde';
+    $add_child_btn_icon = 'fa-arrow-up';
+    $completion_text = 'Ödeme Tamamlandı'; // GİDER İÇİN
+} elseif ($parent['type'] == 'credit' || $parent['doc_type'] == 'invoice_order') {
+    $add_child_btn_text = 'Tahsil Et';
+    $add_child_btn_icon = 'fa-arrow-down';
+    $completion_text = 'Tahsilat Tamamlandı'; // GELİR İÇİN
+}
+
+// --- İPTAL UYARISI ---
 if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
     echo '<div class="alert alert-danger fw-bold text-center m-2"><i class="fa fa-ban"></i> BU İŞLEM İPTAL EDİLMİŞTİR!</div>';
 }
@@ -114,13 +154,11 @@ if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
                             // 1. Dövizli İşlem mi?
                             if ($show_curr != 'TRY') {
                                 if ($child['original_amount'] > 0) {
-                                    // Veritabanında kayıtlıysa onu kullan
                                     $final_original_amount = $child['original_amount'];
                                 } else {
-                                    // Kayıtlı değilse hesaplamaya çalış
+                                    // Zeki Kur Hesabı
                                     $rate_to_use = $child['exchange_rate'];
-                                    
-                                    // EĞER Child Kur 1 ise ama Parent Kur doğruysa, PARENT KURU KULLAN (ÇÖZÜM BURADA)
+                                    // Eğer child kur 1 ise ama parent kur doğruysa, parent kuru kullan
                                     if ($rate_to_use <= 1.01 && $parent['currency'] == $show_curr && $parent['exchange_rate'] > 1) {
                                         $rate_to_use = $parent['exchange_rate'];
                                     }
@@ -131,7 +169,7 @@ if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
                                         $final_original_amount = $child['amount'];
                                     }
                                 }
-                                $final_tl_amount = $child['amount']; // Altına yazılacak TL karşılığı
+                                $final_tl_amount = $child['amount'];
                             } else {
                                 // TL İşlem
                                 $final_original_amount = $child['amount'];
@@ -141,14 +179,12 @@ if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
                             // Ekrana Yazdırma
                             $display_text = number_format($final_original_amount, 2, ',', '.') . ' ' . $show_curr;
 
-                            // Fatura veya silinmişse parantez içine al
                             if ($child['type'] == 'invoice' || $child['type'] == 'invoice_log' || $is_child_deleted) {
                                 echo '<span class="text-muted">(' . $display_text . ')</span>';
                             } else {
                                 echo $display_text;
                             }
 
-                            // Dövizse altına TL karşılığını ekle
                             if ($show_curr != 'TL' && $final_tl_amount > 0) {
                                 echo '<div class="text-muted fw-normal" style="font-size:0.7rem">(' . number_format($final_tl_amount, 2, ',', '.') . ' TL)</div>';
                             }
@@ -168,9 +204,16 @@ if (isset($parent['is_deleted']) && $parent['is_deleted'] == 1) {
         <button class="btn btn-sm <?php echo $invoice_btn_class; ?> shadow-sm" onclick='openInvoiceModal(<?php echo $parent_json; ?>)'>
             <i class="fa <?php echo $invoice_btn_icon; ?>"></i> <?php echo $invoice_btn_text; ?>
         </button>
-        <a href="transaction-add-child.php?parent_id=<?php echo $parent_id; ?>" class="btn btn-sm btn-primary shadow-sm">
-            <i class="fa fa-plus"></i> Yeni Hareket Ekle
-        </a>
+        
+        <?php if(!$is_transaction_completed): ?>
+            <a href="transaction-add-child.php?parent_id=<?php echo $parent_id; ?>" class="btn btn-sm btn-primary shadow-sm">
+                <i class="fa <?php echo $add_child_btn_icon; ?>"></i> <?php echo $add_child_btn_text; ?>
+            </a>
+        <?php else: ?>
+            <span class="btn btn-sm btn-outline-success disabled border-0 fw-bold">
+                <i class="fa fa-check-circle"></i> <?php echo $completion_text; ?>
+            </span>
+        <?php endif; ?>
     </div>
     <?php endif; ?>
 </div>

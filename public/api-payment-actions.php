@@ -12,7 +12,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 // --- GÜVENLİK KONTROLÜ ---
-if ($_SESSION['role'] !== 'admin') {
+if ($_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'muhasebe') {
     echo json_encode(['status' => 'error', 'message' => 'Bu işlem için yetkiniz bulunmuyor.']);
     exit;
 }
@@ -27,10 +27,7 @@ try {
         $current = $stmt->fetchColumn();
         $new = $current ? 0 : 1;
         $pdo->prepare("UPDATE transactions SET is_approved = ? WHERE id = ?")->execute([$new, $id]);
-        
-        // Log Ekle
         log_action($pdo, 'transaction', $id, 'update', $new ? "Ödeme Onaylandı" : "Ödeme Onayı Geri Alındı");
-        
         echo json_encode(['status' => 'success']);
     }
     elseif ($action == 'toggle_priority') {
@@ -39,10 +36,7 @@ try {
         $current = $stmt->fetchColumn();
         $new = $current ? 0 : 1;
         $pdo->prepare("UPDATE transactions SET is_priority = ? WHERE id = ?")->execute([$new, $id]);
-        
-        // Log Ekle
         log_action($pdo, 'transaction', $id, 'update', $new ? "Öncelikli Olarak İşaretlendi" : "Öncelik İşareti Kaldırıldı");
-        
         echo json_encode(['status' => 'success']);
     }
     elseif ($action == 'toggle_check') {
@@ -51,14 +45,19 @@ try {
         $current = $stmt->fetchColumn();
         $new = $current ? 0 : 1;
         $pdo->prepare("UPDATE transactions SET needs_control = ? WHERE id = ?")->execute([$new, $id]);
-        
-        // Log Ekle
         log_action($pdo, 'transaction', $id, 'update', $new ? "Kontrol Edilecek Olarak İşaretlendi" : "Kontrol İşareti Kaldırıldı");
-        
+        echo json_encode(['status' => 'success']);
+    }
+    // --- YENİ EKLENEN KISIM: FATURA ONAYLAMA ---
+    elseif ($action == 'approve_invoice') {
+        // Durumu 'to_be_issued' (Fatura Kesilecek) olarak güncelle
+        $stmt = $pdo->prepare("UPDATE transactions SET invoice_status = 'to_be_issued' WHERE id = ?");
+        $stmt->execute([$id]);
+        log_action($pdo, 'transaction', $id, 'update', "Fatura onayı verildi (Fatura Kesilecekler listesine taşındı).");
         echo json_encode(['status' => 'success']);
     }
     else {
-        throw new Exception("Geçersiz işlem.");
+        throw new Exception("Geçersiz işlem ($action).");
     }
 
 } catch (Exception $e) {

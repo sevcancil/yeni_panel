@@ -23,7 +23,6 @@ try {
     $order_column_index = isset($_POST['order'][0]['column']) ? $_POST['order'][0]['column'] : 5;
     $order_dir = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : 'desc';
 
-    // Kolon indeks haritası
     $columns_map = [
         0 => 't.id', 1 => 't.payment_status', 2 => 't.id', 3 => 't.id', 
         4 => 't.doc_type', 5 => 't.date', 6 => 'd.name', 7 => 'c.company_name', 
@@ -39,7 +38,6 @@ try {
                  LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id
                  WHERE t.parent_id IS NULL "; 
 
-    // Genel Arama
     if (!empty($search_value)) {
         $sql_base .= " AND (
             c.company_name LIKE :global_search 
@@ -50,7 +48,6 @@ try {
         )";
     }
 
-    // Kolon Filtreleme
     $column_searches = [];
     if (isset($_POST['columns'])) {
         foreach ($_POST['columns'] as $colIdx => $colData) {
@@ -58,28 +55,36 @@ try {
             
             if (!empty($colSearchVal)) {
                 switch ($colIdx) {
-                    // --- 1. SÜTUN: DURUM FİLTRELERİ ---
                     case 1: 
-                        if ($colSearchVal == 'paid') {
-                            $sql_base .= " AND t.payment_status = 'paid' ";
-                        } 
-                        elseif ($colSearchVal == 'unpaid') {
-                            $sql_base .= " AND t.payment_status = 'unpaid' ";
-                        } 
+                        // GELİR
+                        if ($colSearchVal == 'income_invoice_paid') {
+                            $sql_base .= " AND t.doc_type='invoice_order' AND t.invoice_status='issued' AND t.payment_status='paid' ";
+                        }
+                        elseif ($colSearchVal == 'income_invoice_unpaid') {
+                            $sql_base .= " AND t.doc_type='invoice_order' AND t.invoice_status='issued' AND t.payment_status!='paid' ";
+                        }
+                        elseif ($colSearchVal == 'income_paid_no_invoice') {
+                            $sql_base .= " AND t.doc_type='invoice_order' AND t.payment_status='paid' AND t.invoice_status!='issued' ";
+                        }
+                        // GİDER
+                        elseif ($colSearchVal == 'expense_invoice_paid') {
+                            $sql_base .= " AND t.doc_type='payment_order' AND t.invoice_status='issued' AND t.payment_status='paid' ";
+                        }
+                        elseif ($colSearchVal == 'expense_invoice_unpaid') {
+                            $sql_base .= " AND t.doc_type='payment_order' AND t.invoice_status='issued' AND t.payment_status!='paid' ";
+                        }
+                        elseif ($colSearchVal == 'expense_paid_no_invoice') {
+                            $sql_base .= " AND t.doc_type='payment_order' AND t.payment_status='paid' AND t.invoice_status!='issued' ";
+                        }
+                        // GENEL
                         elseif ($colSearchVal == 'partial') {
                             $sql_base .= " AND t.payment_status != 'paid' AND (SELECT SUM(amount) FROM transactions WHERE parent_id = t.id AND (type='payment_out' OR type='payment_in') AND is_deleted = 0) > 0 ";
-                        } 
-                        // YENİ FİLTRELER BURADA
-                        elseif ($colSearchVal == 'issued') {
-                            $sql_base .= " AND t.invoice_status = 'issued' ";
-                        } 
-                        elseif ($colSearchVal == 'missing_invoice') {
-                            // Ödemesi bitmiş (paid) ama faturası girilmemiş (pending/waiting)
-                            $sql_base .= " AND t.payment_status = 'paid' AND t.invoice_status != 'issued' ";
                         }
-                        elseif ($colSearchVal == 'to_be_issued') {
-                            // Fatura Kesilecek statüsü
-                            $sql_base .= " AND t.invoice_status = 'to_be_issued' ";
+                        // PLANLANDI (GÜNCELLENDİ: pending veya waiting_approval olanlar da gelsin)
+                        elseif ($colSearchVal == 'planned') {
+                            $sql_base .= " AND t.payment_status = 'unpaid' 
+                                           AND (t.invoice_status = 'pending' OR t.invoice_status = 'waiting_approval' OR t.invoice_status = '') 
+                                           AND (SELECT SUM(amount) FROM transactions WHERE parent_id = t.id AND (type='payment_out' OR type='payment_in') AND is_deleted = 0) <= 0 ";
                         }
                         break;
 
@@ -90,14 +95,11 @@ try {
                         break;
                     case 3: $sql_base .= " AND t.id LIKE :col_id "; $column_searches[':col_id'] = "%$colSearchVal%"; break;
                     case 4: $sql_base .= " AND t.doc_type = :col_doc "; $column_searches[':col_doc'] = $colSearchVal; break;
-                    
-                    // --- 5. SÜTUN: TARİH ARALIĞI ---
-                    case 5:
+                    case 5: // Tarih
                         if (strpos($colSearchVal, '|') !== false) {
                             $dates = explode('|', $colSearchVal);
                             $startDate = $dates[0] ?? '';
                             $endDate = $dates[1] ?? '';
-
                             if (!empty($startDate) && !empty($endDate)) {
                                 $sql_base .= " AND t.date BETWEEN :start_date AND :end_date ";
                                 $column_searches[':start_date'] = $startDate;
@@ -114,7 +116,6 @@ try {
                             $column_searches[':col_date'] = "%$colSearchVal%"; 
                         }
                         break;
-
                     case 6: $sql_base .= " AND d.name LIKE :col_dept "; $column_searches[':col_dept'] = "%$colSearchVal%"; break;
                     case 7: $sql_base .= " AND c.company_name LIKE :col_cust "; $column_searches[':col_cust'] = "%$colSearchVal%"; break;
                     case 8: $sql_base .= " AND tc.code LIKE :col_tour "; $column_searches[':col_tour'] = "%$colSearchVal%"; break;
@@ -166,37 +167,61 @@ try {
             $row_class = 'table-danger text-decoration-line-through text-muted';
             $status_badge = '<span class="badge bg-danger d-block">İPTAL EDİLDİ</span>';
         } else {
-            if ($remaining <= 0.05) {
-                // TAMAMLANDI ama Fatura Durumuna Göre Renk Verelim
-                if ($row['invoice_status'] == 'issued') {
-                    $row_class = 'table-light text-muted';
-                    $status_badge = '<span class="badge bg-success d-block">Tamamlandı (Faturalı)</span>';
+            // DETAYLI DURUM ETİKETLERİ
+            $is_paid = ($remaining <= 0.05);
+            $has_invoice = ($row['invoice_status'] == 'issued');
+            $is_income = ($row['doc_type'] == 'invoice_order'); // Gelir
+            
+            if ($is_paid) {
+                // ÖDEME/TAHSİLAT TAMAM
+                if ($has_invoice) {
+                    if ($is_income) {
+                        $row_class = 'table-light text-muted';
+                        $status_badge = '<span class="badge bg-success d-block">Fatura Kesildi + Tahsilat Tamam</span>';
+                    } else {
+                        $row_class = 'table-light text-muted';
+                        $status_badge = '<span class="badge bg-primary d-block">Fatura Alındı + Ödeme Tamam</span>';
+                    }
                 } else {
-                    // Ödeme Tamam ama Fatura Yoksa Uyarı Ver
+                    // ÖDEME VAR AMA FATURA YOK (KRİTİK)
                     $row_class = 'table-warning'; 
-                    $status_badge = '<span class="badge bg-warning text-dark d-block">(!) Ödendi / Faturasız</span>';
+                    $txt = $is_income ? 'Tahsil Edildi / Faturasız' : 'Ödendi / Faturasız';
+                    $status_badge = '<span class="badge bg-warning text-dark d-block">(!) '.$txt.'</span>';
                 }
             } else {
-                if ($row['doc_type'] == 'payment_order') {
-                    $row_class = 'table-danger bg-opacity-10'; 
-                } elseif ($row['doc_type'] == 'invoice_order') {
-                    $row_class = 'table-success bg-opacity-10'; 
+                // ÖDEME TAMAMLANMAMIŞ
+                if ($has_invoice) {
+                    // Fatura var ama ödeme yok/eksik
+                    if ($is_income) {
+                        $row_class = 'table-success bg-opacity-10';
+                        $status_badge = '<span class="badge bg-success bg-opacity-75 d-block">Fatura Kesildi (Tahsilat Bekliyor)</span>';
+                    } else {
+                        $row_class = 'table-danger bg-opacity-10';
+                        $status_badge = '<span class="badge bg-primary bg-opacity-75 d-block">Fatura Alındı (Ödeme Bekliyor)</span>';
+                    }
+                } else {
+                    // Ne fatura var ne ödeme tam
+                    if ($paid > 0) {
+                        $status_badge = '<span class="badge bg-info text-dark d-block">Kısmi Ödeme</span>';
+                        $row_class = $is_income ? 'table-success bg-opacity-10' : 'table-danger bg-opacity-10';
+                    } else {
+                        // PLANLANDI DURUMU (WAITING APPROVAL DAHİL)
+                        if($row['invoice_status'] == 'waiting_approval') {
+                            $status_badge = '<span class="badge bg-warning text-dark d-block">Onay Bekliyor</span>';
+                        } else {
+                            $status_badge = '<span class="badge bg-secondary d-block">Planlandı</span>';
+                        }
+                        $row_class = $is_income ? 'table-success bg-opacity-10' : 'table-danger bg-opacity-10';
+                    }
                 }
                 
                 if (date('Y-m-d', strtotime($row['date'])) < date('Y-m-d')) {
-                    $row_class .= ' border-start border-3 border-dark'; // Gecikmiş
-                }
-
-                if ($paid > 0) {
-                    $status_badge = '<span class="badge bg-info text-dark d-block">Kısmi Ödendi</span>';
-                } elseif (!empty($row['invoice_no'])) {
-                    $status_badge = '<span class="badge bg-warning text-dark d-block">Faturalandı</span>';
-                } else {
-                    $status_badge = '<span class="badge bg-secondary d-block">Planlandı</span>';
+                    $row_class .= ' border-start border-3 border-dark'; 
                 }
             }
         }
 
+        // Tutar Görünümü ve Etiket
         $main_amount_display = number_format($amount, 2, ',', '.') . ' ₺';
         $paid_label = ($row['doc_type'] == 'invoice_order') ? 'Tahsil Edilen' : 'Ödenen';
 
@@ -214,6 +239,7 @@ try {
             $tl_amt_html = '<span class="fw-bold text-dark" style="font-size:1rem;">' . $main_amount_display . '</span>';
         }
 
+        // Butonlar
         $app_active = $row['is_approved'] ? 'active approval' : '';
         $prio_active = $row['is_priority'] ? 'active priority' : '';
         $cont_active = $row['needs_control'] ? 'active control' : '';
