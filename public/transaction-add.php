@@ -11,8 +11,21 @@ $stmtUser = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
 $stmtUser->execute([$user_id]);
 $current_user_name = $stmtUser->fetchColumn();
 
+// --- GET İLE GELEN (KUR FARKI VS.) VERİLERİ HAZIRLA ---
+$pre_doc_type = $_GET['doc_type'] ?? 'payment_order';
+$pre_amount   = $_GET['amount'] ?? '';
+$pre_desc     = $_GET['desc'] ?? '';
+$pre_customer = $_GET['customer_id'] ?? '';
+$pre_date     = $_GET['date'] ?? date('Y-m-d');
+
+// Otomatik doldurma var mı?
+$is_auto_fill = ($pre_amount != '');
+
+// Verileri Çek
 $departments = $pdo->query("SELECT * FROM departments ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $tours = $pdo->query("SELECT * FROM tour_codes WHERE status = 'active' ORDER BY code DESC")->fetchAll(PDO::FETCH_ASSOC);
+// Müşterileri burada çekiyoruz ki JS ile doldurabilelim
+$customers = $pdo->query("SELECT id, company_name FROM customers ORDER BY company_name")->fetchAll(PDO::FETCH_ASSOC);
 
 $error = '';
 
@@ -57,27 +70,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Fatura Durumu ve Tarihi
         $invoice_status = 'pending';
-        $invoice_date = null; // Varsayılan boş
+        $invoice_date = null;
 
-        if ($doc_type === 'invoice_order') {
-            if (isset($_POST['issue_invoice_check'])) {
-                $invoice_status = 'to_be_issued'; 
-                
-                // Fatura Tarihi Kontrolü
-                if (!empty($_POST['invoice_issue_date'])) {
-                    $posted_inv_date = $_POST['invoice_issue_date'];
-                    // Geçmiş tarih kontrolü (Server tarafı güvenlik)
-                    if ($posted_inv_date < date('Y-m-d')) {
-                        throw new Exception("Fatura tarihi bugünden eski olamaz.");
-                    }
-                    $invoice_date = $posted_inv_date;
-                } else {
-                    $invoice_date = date('Y-m-d'); // Girilmezse bugün
-                }
-
+        // Fatura Kesilsin/İstensin Checkbox Kontrolü
+        if (isset($_POST['issue_invoice_check'])) {
+            $invoice_status = 'to_be_issued'; // Fatura Kesilecek/Bekleniyor statüsü
+            
+            if (!empty($_POST['invoice_issue_date'])) {
+                $invoice_date = $_POST['invoice_issue_date'];
             } else {
-                $invoice_status = 'waiting_approval';
+                $invoice_date = $date;
             }
+        } elseif ($doc_type === 'invoice_order') {
+            $invoice_status = 'waiting_approval';
         }
 
         $type = ($doc_type === 'payment_order') ? 'debt' : 'credit';
@@ -153,8 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-bold">Belge Tipi</label>
                                 <select name="doc_type" id="doc_type" class="form-select form-select-lg" onchange="toggleFields()">
-                                    <option value="payment_order">Ödeme Emri (Gider)</option>
-                                    <option value="invoice_order">Tahsilat Emri (Gelir)</option>
+                                    <option value="payment_order" <?php echo ($pre_doc_type == 'payment_order' ? 'selected' : ''); ?>>Ödeme Emri (Gider)</option>
+                                    <option value="invoice_order" <?php echo ($pre_doc_type == 'invoice_order' ? 'selected' : ''); ?>>Tahsilat Emri (Gelir)</option>
                                 </select>
                                 <div id="type_hint" class="form-text text-danger fw-bold mt-1">
                                     <i class="fa fa-arrow-circle-up"></i> KASA ÇIKIŞI (Ödeme)
@@ -162,7 +167,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">İşlem Tarihi</label>
-                                <input type="date" name="date" class="form-control form-control-lg" value="<?php echo date('Y-m-d'); ?>" required>
+                                <input type="date" name="date" class="form-control form-control-lg" value="<?php echo $pre_date; ?>" required>
                             </div>
                         </div>
                     </div>
@@ -206,7 +211,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="row align-items-end">
                             <div class="col-md-4 mb-3">
                                 <label class="form-label">Tutar</label>
-                                <input type="number" step="0.01" name="amount" id="amount" class="form-control form-control-lg fw-bold" placeholder="0.00" required oninput="calcTL()">
+                                <input type="number" step="0.01" name="amount" id="amount" class="form-control form-control-lg fw-bold" 
+                                       placeholder="0.00" required oninput="calcTL()" value="<?php echo $pre_amount; ?>">
                             </div>
                             <div class="col-md-3 mb-3">
                                 <label class="form-label">Para Birimi</label>
@@ -269,30 +275,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
                         </div>
 
-                        <div id="collection_details_group" class="d-none">
+                        <div id="collection_details_group">
                             <div class="alert alert-warning border-warning">
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" id="issue_invoice_check" name="issue_invoice_check" onchange="toggleInvoiceDate()">
                                     <label class="form-check-label fw-bold text-dark" for="issue_invoice_check">
-                                        Fatura Kesilsin
+                                        Fatura Kesilsin / İstensin
                                     </label>
                                 </div>
                                 
                                 <div id="invoice_date_div" class="d-none mt-2">
                                     <label class="form-label small fw-bold">Fatura Tarihi</label>
-                                    <input type="date" name="invoice_issue_date" class="form-control form-control-sm border-warning" min="<?php echo date('Y-m-d'); ?>" value="<?php echo date('Y-m-d'); ?>">
-                                    <small class="text-danger" style="font-size:0.7rem;">* Geçmiş tarih seçilemez.</small>
+                                    <input type="date" name="invoice_issue_date" class="form-control form-control-sm border-warning" value="<?php echo date('Y-m-d'); ?>">
                                 </div>
 
                                 <hr class="my-2">
-                                <small class="text-muted">Seçilirse 'Fatura Kesilecek' olarak işaretlenir.</small>
+                                <small class="text-muted">İşaretlenirse 'Fatura Bekleniyor' listesine düşer.</small>
                             </div>
                         </div>
                     </div>
 
                     <div class="form-section">
                         <label class="form-label">Açıklama</label>
-                        <textarea name="description" class="form-control" rows="4"></textarea>
+                        <textarea name="description" class="form-control" rows="4"><?php echo guvenli_html($pre_desc); ?></textarea>
                     </div>
 
                     <div class="d-grid gap-2">
@@ -330,8 +335,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </div>
 
-    <?php $customers = $pdo->query("SELECT id, company_name FROM customers ORDER BY company_name")->fetchAll(PDO::FETCH_ASSOC); ?>
-
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
@@ -343,6 +346,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             var customers = <?php echo json_encode($customers); ?>;
             var customerSelect = $('#customer_id');
             $.each(customers, function(i, c) { customerSelect.append(new Option(c.company_name, c.id)); });
+            
+            // --- KUR FARKI OTOMATİK DOLDURMA ---
+            var preCust = "<?php echo $pre_customer ?? ''; ?>";
+            var isAuto = "<?php echo (isset($is_auto_fill) && $is_auto_fill) ? '1' : ''; ?>";
+
+            if(preCust) {
+                $('#customer_id').val(preCust).trigger('change');
+                fetchCustomerDetails();
+            }
+
+            if(isAuto === '1') {
+                // Kur Farkı varsa Fatura Kesilsin kutusu otomatik işaretlenir
+                $('#issue_invoice_check').prop('checked', true);
+                toggleInvoiceDate(); 
+            }
+
             toggleFields();
         });
 
@@ -350,23 +369,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             var type = document.getElementById('doc_type').value;
             var hint = document.getElementById('type_hint');
             var payDiv = document.getElementById('payment_details_group');
-            var collDiv = document.getElementById('collection_details_group');
-
+            
+            // Ödeme de olsa Tahsilat da olsa Fatura Kesilsin kutusu açık kalsın (Kur farkı için)
+            // Ama payment details (Banka seçimi vs) sadece ödemede mantıklı.
             if (type === 'payment_order') {
                 hint.innerHTML = '<i class="fa fa-arrow-circle-up"></i> KASA ÇIKIŞI (Ödeme)';
                 hint.className = 'form-text text-danger fw-bold mt-1';
                 payDiv.classList.remove('d-none'); 
-                collDiv.classList.add('d-none');
                 togglePaymentSource();
             } else {
                 hint.innerHTML = '<i class="fa fa-arrow-circle-down"></i> KASA GİRİŞİ (Tahsilat)';
                 hint.className = 'form-text text-success fw-bold mt-1';
                 payDiv.classList.add('d-none'); 
-                collDiv.classList.remove('d-none');
             }
         }
 
-        // YENİ FONKSİYON: Fatura Tarihi Alanını Aç/Kapa
         function toggleInvoiceDate() {
             var checkBox = document.getElementById('issue_invoice_check');
             var dateDiv = document.getElementById('invoice_date_div');

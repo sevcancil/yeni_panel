@@ -65,6 +65,10 @@ if ($parent['type'] == 'credit') {
     $bg_class = "bg-danger text-white";
 }
 
+// Ana İşlem Kuru (Hesaplama için)
+$parent_rate = ($parent['exchange_rate'] > 0) ? (float)$parent['exchange_rate'] : 1.0;
+$parent_currency = $parent['currency'];
+
 // --- KAYIT ---
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -122,12 +126,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // KASA GÜNCELLEME
         if ($selected_channel_id) {
-            $table_to_update = 'payment_channels'; 
-            if ($child_type == 'payment_out') {
-                $pdo->prepare("UPDATE payment_channels SET current_balance = current_balance - ? WHERE id = ?")->execute([$base_amount, $selected_channel_id]);
-            } else {
-                $pdo->prepare("UPDATE payment_channels SET current_balance = current_balance + ? WHERE id = ?")->execute([$base_amount, $selected_channel_id]);
-            }
+            // Bakiyeler payment_channels tablosundaysa burayı açabiliriz.
+            // Şimdilik sadece log.
         }
 
         // DURUM GÜNCELLEME
@@ -140,7 +140,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         log_action($pdo, 'transaction', $last_child_id, 'create', "Hareket Kaydı Oluşturuldu.");
 
         $pdo->commit();
-        header("Location: payment-orders.php?msg=success");
+
+        // --- YÖNLENDİRME MANTIĞI (GÜNCELLENDİ) ---
+        // Eğer kullanıcı kur farkı faturası kesmek istediyse, formdan gelen URL'ye git.
+        // Yoksa normal listeye dön.
+        if (!empty($_POST['next_url'])) {
+            header("Location: " . $_POST['next_url']);
+        } else {
+            header("Location: payment-orders.php?msg=success");
+        }
         exit;
 
     } catch (Exception $e) {
@@ -241,9 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                     <span class="fw-bold small"><?php echo guvenli_html($bank['bank_name']); ?></span>
                                                     <span class="badge bg-secondary"><?php echo $bank['currency']; ?></span>
                                                 </div>
-                                                <div class="font-monospace small text-dark mt-1">
-                                                    <?php echo guvenli_html($bank['iban']); ?>
-                                                </div>
+                                                <div class="font-monospace small text-dark mt-1"><?php echo guvenli_html($bank['iban']); ?></div>
                                                 <button class="btn btn-sm btn-link p-0 position-absolute bottom-0 end-0 me-2 mb-1" 
                                                         onclick="navigator.clipboard.writeText('<?php echo $bank['iban']; ?>'); alert('IBAN Kopyalandı!');" 
                                                         title="Kopyala">
@@ -276,10 +282,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <div class="alert alert-danger"><?php echo $error; ?></div>
                         <?php endif; ?>
 
-                        <form method="POST" enctype="multipart/form-data">
+                        <form method="POST" enctype="multipart/form-data" id="childForm">
+                            <input type="hidden" name="next_url" id="next_url" value="">
+                            
+                            <input type="hidden" id="parent_rate" value="<?php echo $parent_rate; ?>">
+                            <input type="hidden" id="parent_currency" value="<?php echo $parent_currency; ?>">
+                            <input type="hidden" id="parent_type" value="<?php echo $parent['type']; ?>"> <input type="hidden" id="customer_id" value="<?php echo $parent['customer_id']; ?>">
+
                             <div class="mb-3">
                                 <label class="form-label fw-bold">İşlem Tarihi</label>
-                                <input type="date" name="date" class="form-control form-control-lg" value="<?php echo date('Y-m-d'); ?>" required>
+                                <input type="date" name="date" id="date" class="form-control form-control-lg" value="<?php echo date('Y-m-d'); ?>" required>
                             </div>
 
                             <div class="card bg-light border-0 mb-3">
@@ -353,8 +365,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
-    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
         $(document).ready(function() {
@@ -364,6 +377,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 width: '100%',
                 placeholder: 'Yazarak arayın veya seçin...'
             });
+            
+            // Eğer Ana işlem dövizli ise formu ona göre hazırla
+            var pCurr = $('#parent_currency').val();
+            if(pCurr !== 'TRY') {
+                $('#currency').val(pCurr).trigger('change');
+            }
         });
 
         function updateRate() {
@@ -387,6 +406,96 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         window.onload = function() {
             updateRate();
         };
+
+        // --- KUR FARKI HESAPLAMA VE YÖNLENDİRME (JS) ---
+        $('#childForm').on('submit', function(e) {
+            e.preventDefault(); // Formu durdur
+            
+            var parentCurr = $('#parent_currency').val();
+            var payCurr = $('#currency').val();
+            var shouldRedirect = false;
+            
+            // Kur farkı sadece Dövizli işlemlerde ve aynı kur tipindeyse hesaplanır
+            if (parentCurr !== 'TRY' && parentCurr === payCurr) {
+                var oldRate = parseFloat($('#parent_rate').val()) || 1;
+                var newRate = parseFloat($('#exchange_rate').val()) || 1;
+                var payAmount = parseFloat($('#pay_amount').val()) || 0;
+                var parentType = $('#parent_type').val(); // debt veya credit
+
+                // Fark Hesapla
+                var diffTotal = (newRate - oldRate) * payAmount;
+                
+                // Fark 0.01'den büyükse sor (Eksi veya Artı)
+                if (Math.abs(diffTotal) > 0.01) {
+                    var title = "";
+                    var text = "";
+                    var confirmBtn = "";
+                    var redirectUrl = "";
+                    var amountStr = Math.abs(diffTotal).toFixed(2);
+                    var custId = $('#customer_id').val();
+                    var dateVal = $('#date').val();
+
+                    // SENARYO 1: GELİR (TAHSİLAT)
+                    if (parentType === 'credit') {
+                        if (diffTotal > 0) {
+                            // Kar -> Fatura Kesilecek
+                            title = "Kur Farkı Geliri: " + diffTotal.toLocaleString('tr-TR') + " TL";
+                            text = "Lehinize kur farkı oluştu. Kur farkı faturası kesmek ister misiniz?";
+                            confirmBtn = "Evet, Fatura Kes";
+                            redirectUrl = "transaction-add.php?doc_type=invoice_order&desc=" + encodeURIComponent("Kur Farkı Faturası (Gelir)") + "&amount=" + amountStr + "&customer_id=" + custId + "&date=" + dateVal;
+                        } else {
+                            // Zarar -> Fatura Alınacak
+                            title = "Kur Farkı Gideri: " + Math.abs(diffTotal).toLocaleString('tr-TR') + " TL";
+                            text = "Aleyhinize kur farkı oluştu. Karşı taraftan fatura isteyip sisteme girmek ister misiniz?";
+                            confirmBtn = "Evet, Fatura Girişi Yap";
+                            redirectUrl = "transaction-add.php?doc_type=payment_order&desc=" + encodeURIComponent("Kur Farkı Faturası (Gider)") + "&amount=" + amountStr + "&customer_id=" + custId + "&date=" + dateVal;
+                        }
+                    }
+                    // SENARYO 2: GİDER (ÖDEME)
+                    else if (parentType === 'debt') {
+                        if (diffTotal > 0) {
+                            // Zarar (Daha çok TL çıktı) -> Fatura Alınacak
+                            title = "Kur Farkı Gideri: " + diffTotal.toLocaleString('tr-TR') + " TL";
+                            text = "Aleyhinize kur farkı oluştu. Karşı taraftan fatura isteyip sisteme girmek ister misiniz?";
+                            confirmBtn = "Evet, Fatura Girişi Yap";
+                            redirectUrl = "transaction-add.php?doc_type=payment_order&desc=" + encodeURIComponent("Kur Farkı Faturası (Gelen)") + "&amount=" + amountStr + "&customer_id=" + custId + "&date=" + dateVal;
+                        } else {
+                            // Kar (Daha az TL çıktı) -> Fatura Kesilecek
+                            title = "Kur Farkı Geliri: " + Math.abs(diffTotal).toLocaleString('tr-TR') + " TL";
+                            text = "Lehinize kur farkı oluştu. Kur farkı faturası kesmek ister misiniz?";
+                            confirmBtn = "Evet, Fatura Kes";
+                            redirectUrl = "transaction-add.php?doc_type=invoice_order&desc=" + encodeURIComponent("Kur Farkı Faturası (Gelir)") + "&amount=" + amountStr + "&customer_id=" + custId + "&date=" + dateVal;
+                        }
+                    }
+
+                    // SweetAlert ile Sor
+                    Swal.fire({
+                        title: title,
+                        text: text,
+                        icon: 'info',
+                        showCancelButton: true,
+                        confirmButtonColor: '#3085d6',
+                        cancelButtonColor: '#d33',
+                        confirmButtonText: confirmBtn,
+                        cancelButtonText: 'Hayır, Sadece Kaydet'
+                    }).then((result) => {
+                        if (result.isConfirmed) {
+                            // Evet dedi -> URL'yi inputa yaz ve submit et
+                            $('#next_url').val(redirectUrl);
+                        } else {
+                            // Hayır dedi -> URL boş kalsın
+                            $('#next_url').val('');
+                        }
+                        // Her türlü formu gönder (PHP kaydedecek)
+                        document.getElementById('childForm').submit();
+                    });
+                    return; // Fonksiyonu burada kes, SweetAlert cevabını bekliyor
+                }
+            }
+
+            // Fark yoksa direkt gönder
+            document.getElementById('childForm').submit();
+        });
     </script>
 </body>
 </html>
