@@ -17,7 +17,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <style>
         .filter-input, .filter-select { width: 100%; padding: 3px; font-size: 0.8rem; border: 1px solid #ced4da; border-radius: 3px; }
         .dt-control { cursor: pointer; text-align: center; vertical-align: middle; color: #0d6efd; }
-        .dt-control:hover { color: #0a58ca; }
         .action-icon { color: #d1d1d1; transition: all 0.2s ease-in-out; font-size: 1.2rem; cursor: pointer; }
         .action-icon:hover { transform: scale(1.3); color: #888; }
         .action-icon.active.approval { color: #198754 !important; }
@@ -31,8 +30,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
         th { font-size: 0.9rem; white-space: nowrap; }
         td { font-size: 0.9rem; vertical-align: middle; }
         .date-range-container input { font-size: 0.75rem; padding: 2px 4px; }
-        
-        /* Grup Başlıklarını Belirginleştir */
         optgroup { font-weight: bold; color: #555; background-color: #f8f9fa; }
         option { color: #000; background-color: #fff; padding: 5px; }
     </style>
@@ -61,41 +58,34 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                             </tr>
                             <tr class="filters">
                                 <td></td> 
-                                
                                 <td>
                                     <select class="filter-select fw-bold text-dark" data-col-index="1" style="min-width: 150px;">
                                         <option value="">Tümü</option>
-                                        
-                                        <optgroup label="GELİR (TAHSİLAT) DURUMLARI">
+                                        <optgroup label="GELİR (TAHSİLAT)">
                                             <option value="income_invoice_paid">✅ Fatura Kesildi + Tahsil Edildi</option>
                                             <option value="income_invoice_unpaid">⏳ Fatura Kesildi (Tahsilat Bekliyor)</option>
-                                            <option value="income_paid_no_invoice" class="text-danger fw-bold">(!) Tahsil Edildi / Faturasız</option>
+                                            <option value="income_paid_no_invoice" class="text-danger">(!) Tahsil Edildi / Faturasız</option>
                                         </optgroup>
-
-                                        <optgroup label="GİDER (ÖDEME) DURUMLARI">
+                                        <optgroup label="GİDER (ÖDEME)">
                                             <option value="expense_invoice_paid">✅ Fatura Alındı + Ödendi</option>
                                             <option value="expense_invoice_unpaid">⏳ Fatura Alındı (Ödeme Bekliyor)</option>
-                                            <option value="expense_paid_no_invoice" class="text-danger fw-bold">(!) Ödendi / Faturasız</option>
+                                            <option value="expense_paid_no_invoice" class="text-danger">(!) Ödendi / Faturasız</option>
                                         </optgroup>
-
-                                        <optgroup label="GENEL DURUMLAR">
-                                            <option value="partial">Kısmi Ödeme / Tahsilat</option>
-                                            <option value="planned">Planlandı (İşlem Yok)</option>
+                                        <optgroup label="GENEL">
+                                            <option value="partial">Kısmi Ödeme</option>
+                                            <option value="planned">Planlandı</option>
                                         </optgroup>
                                     </select>
                                 </td> 
-                                
-                                <td><select class="filter-select" data-col-index="2"><option value="">Filtrele...</option><option value="approved">Onaylılar</option><option value="priority">Öncelikliler</option><option value="control">Kontrol Gereken</option></select></td> 
+                                <td><select class="filter-select" data-col-index="2"><option value="">Filtrele...</option><option value="approved">Onaylılar</option><option value="priority">Öncelikliler</option><option value="control">Kontrol</option></select></td> 
                                 <td><input type="text" class="filter-input" placeholder="ID" data-col-index="3"></td>
                                 <td><select class="filter-select" data-col-index="4"><option value="">Tümü</option><option value="invoice_order">Fatura (Gelir)</option><option value="payment_order">Ödeme (Gider)</option></select></td>
-                                
                                 <td>
                                     <div class="d-flex flex-column gap-1 date-range-container">
-                                        <input type="date" class="form-control form-control-sm date-filter" id="date_start" placeholder="Başlangıç">
-                                        <input type="date" class="form-control form-control-sm date-filter" id="date_end" placeholder="Bitiş">
+                                        <input type="date" class="form-control form-control-sm date-filter" id="date_start">
+                                        <input type="date" class="form-control form-control-sm date-filter" id="date_end">
                                     </div>
                                 </td>
-
                                 <td><input type="text" class="filter-input" placeholder="Bölüm" data-col-index="6"></td>
                                 <td><input type="text" class="filter-input" placeholder="Cari Ara..." data-col-index="7"></td>
                                 <td><input type="text" class="filter-input" placeholder="Tur Kodu" data-col-index="8"></td>
@@ -117,31 +107,27 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
         </div>
         <div class="d-flex align-items-center">
             <span class="me-3 fs-4">Toplam: <strong class="text-warning" id="selected-total">0,00 ₺</strong></span>
-            <button class="btn btn-primary" onclick="alert('Birleştirme özelliği yakında!')"><i class="fa fa-link"></i> Seçilenleri Birleştir / Öde</button>
+            <button class="btn btn-primary shadow" onclick="openMergeModal()">
+                <i class="fa fa-layer-group"></i> Seçilenleri Birleştir / Öde
+            </button>
         </div>
     </div>
 
-    <div class="modal fade" id="editModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">İşlem Düzenle</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="editModalBody"></div></div></div></div>
-    <div class="modal fade" id="logModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-info text-white"><h5 class="modal-title">İşlem Tarihçesi</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="logModalBody"></div></div></div></div>
-
+    <div class="modal fade" id="editModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">İşlem</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="editModalBody"></div></div></div></div>
+    <div class="modal fade" id="logModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-info text-white"><h5 class="modal-title">Tarihçe</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="logModalBody"></div></div></div></div>
+    
     <div class="modal fade" id="invoiceModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
-                <div class="modal-header bg-success text-white">
-                    <h5 class="modal-title"><i class="fa fa-file-invoice"></i> Fatura Girişi</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
+                <div class="modal-header bg-success text-white"><h5 class="modal-title">Fatura Girişi</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
                 <div class="modal-body">
-                    <div class="alert alert-light border mb-3 p-2 small">
-                        <strong id="inv_company"></strong><br>
-                        Tutar: <span class="text-success fw-bold" id="inv_amount"></span> | ID: <span id="inv_id"></span>
-                    </div>
+                    <div class="alert alert-light border mb-3 p-2 small"><strong id="inv_company"></strong><br>Tutar: <span class="text-success fw-bold" id="inv_amount"></span></div>
                     <form id="invoiceForm" enctype="multipart/form-data">
                         <input type="hidden" name="id" id="inv_trans_id">
-                        <div class="mb-3"><label class="form-label fw-bold">Fatura Numarası</label><input type="text" name="invoice_no" id="inv_no_input" class="form-control" required placeholder="Gelen Fatura No"></div>
+                        <div class="mb-3"><label class="form-label fw-bold">Fatura No</label><input type="text" name="invoice_no" id="inv_no_input" class="form-control" required></div>
                         <div class="mb-3"><label class="form-label fw-bold">Fatura Tarihi</label><input type="date" name="invoice_date" class="form-control" required value="<?php echo date('Y-m-d'); ?>"></div>
-                        <div class="mb-3"><label class="form-label">Fatura Dosyası (PDF/Resim)</label><input type="file" name="invoice_file" class="form-control" accept=".pdf,.jpg,.png,.jpeg"></div>
-                        <div class="d-grid"><button type="submit" class="btn btn-success"><i class="fa fa-save"></i> Faturayı Kaydet</button></div>
+                        <div class="mb-3"><label class="form-label">Dosya</label><input type="file" name="invoice_file" class="form-control" accept=".pdf,.jpg,.png"></div>
+                        <div class="d-grid"><button type="submit" class="btn btn-success">Kaydet</button></div>
                     </form>
                 </div>
             </div>
@@ -155,10 +141,54 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
+        // --- SEÇİM VE TOPLAMA MANTIĞI ---
+        var selectedIds = [];
+
+        // Dinamik olarak oluşturulan checkboxları dinle
+        $(document).on('change', '.row-select', function() {
+            calculateSelection();
+        });
+
+        function calculateSelection() {
+            selectedIds = [];
+            var total = 0.0;
+
+            $('.row-select:checked').each(function() {
+                var id = $(this).data('id');
+                // data-amount, PHP'den gelen "kalan tutar"dır.
+                var amt = parseFloat($(this).data('amount')) || 0;
+                selectedIds.push(id);
+                total += amt;
+            });
+
+            $('#selected-count').text(selectedIds.length);
+            $('#selected-total').text(total.toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' TL');
+
+            var bar = $('#selection-bar');
+            if(selectedIds.length > 0) {
+                bar.addClass('show');
+            } else {
+                bar.removeClass('show');
+            }
+        }
+
+        // --- BİRLEŞTİR BUTONU ---
+        window.openMergeModal = function() {
+            if(selectedIds.length < 1) {
+                Swal.fire('Uyarı', 'Lütfen en az bir kayıt seçin.', 'warning');
+                return;
+            }
+            var idsStr = selectedIds.join(',');
+            var modal = new bootstrap.Modal(document.getElementById('editModal'));
+            modal.show();
+            $('#editModalBody').html('<div class="text-center p-5"><i class="fa fa-spinner fa-spin fa-3x"></i><br>Yükleniyor...</div>');
+            $('#editModalBody').load('transaction-merge.php?ids=' + idsStr);
+        };
+
         function format(d) {
             var idHtml = d[3]; 
             var id = idHtml.match(/data-id="(\d+)"/) ? idHtml.match(/data-id="(\d+)"/)[1] : idHtml.replace(/[^0-9]/g, '');
-            var div = $('<div/>').addClass('p-3 bg-light border rounded m-2').attr('id', 'details-' + id).html('<div class="text-center"><i class="fa fa-spinner fa-spin"></i> Yükleniyor...</div>');
+            var div = $('<div/>').addClass('p-3 bg-light border rounded m-2').html('<div class="text-center"><i class="fa fa-spinner fa-spin"></i> Yükleniyor...</div>');
             $.get('get-child-transactions.php?parent_id=' + id, function(content){ div.html(content); }).fail(function(){ div.html('Hata.'); });
             return div;
         }
@@ -178,21 +208,11 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" },
                 initComplete: function () {
                     var api = this.api();
-                    
-                    $('.filter-input, .filter-select').each(function () {
-                        var $el = $(this);
-                        $el.off('keyup change').on('keyup change', function (e) {
-                            if (e.type === 'change' || e.keyCode == 13) {
-                                api.column($el.data('col-index')).search(this.value).draw();
-                            }
-                        });
+                    $('.filter-input, .filter-select').on('keyup change', function (e) {
+                        if (e.type === 'change' || e.keyCode == 13) api.column($(this).data('col-index')).search(this.value).draw();
                     });
-
                     $('.date-filter').on('change', function() {
-                        var start = $('#date_start').val();
-                        var end = $('#date_end').val();
-                        var searchVal = start + '|' + end;
-                        api.column(5).search(searchVal).draw();
+                        api.column(5).search($('#date_start').val() + '|' + $('#date_end').val()).draw();
                     });
                 }
             });
@@ -206,65 +226,42 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             });
         });
 
-        // Fatura Modal
+        // Fatura Modal İşlemleri
         var invoiceModal = new bootstrap.Modal(document.getElementById('invoiceModal'));
-        function openInvoiceModal(data) {
+        window.openInvoiceModal = function(data) {
             document.getElementById('inv_trans_id').value = data.id;
-            document.getElementById('inv_company').innerText = $(data.company_name).text() || data.company_name;
-            document.getElementById('inv_id').innerText = '#' + data.id;
-            
-            var amountText = "";
-            if(data.original_amount && parseFloat(data.original_amount) > 0 && data.currency != 'TRY') {
-                amountText = data.original_amount + ' ' + data.currency;
-            } else {
-                amountText = data.amount + ' TL'; 
-            }
-            
-            document.getElementById('inv_amount').innerText = amountText;
+            document.getElementById('inv_company').innerText = data.company_name || '';
+            var amt = (data.original_amount > 0 && data.currency != 'TRY') ? data.original_amount + ' ' + data.currency : data.amount + ' TL';
+            document.getElementById('inv_amount').innerText = amt;
             document.getElementById('inv_no_input').value = data.invoice_no || '';
             invoiceModal.show();
-        }
+        };
 
         $('#invoiceForm').on('submit', function(e) {
             e.preventDefault();
-            var formData = new FormData(this);
             $.ajax({
-                url: 'api-upload-invoice.php',
-                type: 'POST', data: formData, contentType: false, processData: false, dataType: 'json',
+                url: 'api-upload-invoice.php', type: 'POST', data: new FormData(this), contentType: false, processData: false, dataType: 'json',
                 success: function(res) {
-                    if(res.status === 'success') {
-                        invoiceModal.hide();
-                        Swal.fire({ icon: 'success', title: 'Başarılı', text: 'Fatura kaydedildi.', timer: 1500, showConfirmButton: false }).then(() => {
-                            $('#paymentTable').DataTable().ajax.reload(null, false);
-                        });
-                    } else {
-                        Swal.fire('Hata', res.message, 'error');
-                    }
+                    if(res.status === 'success') { invoiceModal.hide(); Swal.fire('Başarılı','Fatura kaydedildi.','success').then(()=>$('#paymentTable').DataTable().ajax.reload(null,false)); }
+                    else Swal.fire('Hata',res.message,'error');
                 }
             });
         });
 
-        function deleteTransaction(id) {
-            Swal.fire({ title: 'Silinsin mi?', text: "Bu işlem geri alınamaz!", icon: 'warning', showCancelButton: true, confirmButtonText: 'Evet, Sil' }).then((result) => {
-                if (result.isConfirmed) {
-                    $.post('transaction-delete.php', { id: id }, function(res) {
-                        if(res.status === 'success') { $('#paymentTable').DataTable().ajax.reload(null, false); Swal.fire('Silindi', '', 'success'); }
-                        else Swal.fire('Hata', res.message, 'error');
-                    }, 'json');
-                }
+        window.deleteTransaction = function(id) {
+            Swal.fire({ title: 'Silinsin mi?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Evet' }).then((r) => {
+                if (r.isConfirmed) $.post('transaction-delete.php', { id: id }, function(res) { 
+                    if(res.status==='success') $('#paymentTable').DataTable().ajax.reload(null,false); 
+                }, 'json');
             });
-        }
-        function toggleStatus(id, type, element) {
+        };
+        window.toggleStatus = function(id, type) {
             $.post('api-payment-actions.php', { id: id, action: 'toggle_' + type }, function(res) {
-                if(res.status === 'success') { 
-                    $('#paymentTable').DataTable().ajax.reload(null, false);
-                    const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
-                    Toast.fire({ icon: 'success', title: 'Güncellendi' });
-                }
+                if(res.status==='success') $('#paymentTable').DataTable().ajax.reload(null,false);
             }, 'json');
-        }
-        function openEditModal(id) { new bootstrap.Modal(document.getElementById('editModal')).show(); $('#editModalBody').load('transaction-edit.php?id=' + id); }
-        function openLogModal(id) { new bootstrap.Modal(document.getElementById('logModal')).show(); $('#logModalBody').load('get-log-history.php?id=' + id); }
+        };
+        window.openEditModal = function(id) { new bootstrap.Modal(document.getElementById('editModal')).show(); $('#editModalBody').load('transaction-edit.php?id=' + id); };
+        window.openLogModal = function(id) { new bootstrap.Modal(document.getElementById('logModal')).show(); $('#logModalBody').load('get-log-history.php?id=' + id); };
     </script>
 </body>
 </html>

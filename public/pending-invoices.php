@@ -7,6 +7,7 @@ require_once '../app/functions/security.php';
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
 // 1. LİSTE: FATURA KESİLECEKLER (to_be_issued) - ACİL
+// invoice_date'i de çekiyoruz
 $sql_issued = "SELECT t.*, 
                c.company_name, c.tax_office, c.tax_number, c.tc_number, c.address, c.city, c.country,
                tc.code as tour_code 
@@ -16,7 +17,7 @@ $sql_issued = "SELECT t.*,
         WHERE t.invoice_status = 'to_be_issued' 
         AND t.doc_type = 'invoice_order'
         AND (t.parent_id IS NULL OR t.parent_id = 0)
-        ORDER BY t.date ASC";
+        ORDER BY t.invoice_date ASC, t.date ASC"; // Önce fatura tarihine göre sırala
 $list_issued = $pdo->query($sql_issued)->fetchAll(PDO::FETCH_ASSOC);
 
 // 2. LİSTE: ONAY BEKLEYENLER (waiting_approval) - BEKLEMEDE
@@ -43,6 +44,8 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
     <style>
         .table-priority { border: 2px solid #ffc107; }
         .table-priority thead { background-color: #fff3cd; }
+        .row-overdue { background-color: #ffe6e6 !important; } /* Gecikmiş Fatura Rengi */
+        .row-today { background-color: #fff8e1 !important; } /* Bugün Kesilecek Rengi */
     </style>
 </head>
 <body>
@@ -77,18 +80,41 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
                     <thead class="table-light">
                         <tr>
                             <th width="50">ID</th>
-                            <th>Tarih</th>
-                            <th>Cari / Müşteri</th>
+                            <th>Fatura Tarihi (Planlanan)</th> <th>Cari / Müşteri</th>
                             <th>Açıklama</th>
                             <th class="text-end">Tutar</th>
                             <th class="text-center" width="150">İşlem</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach($list_issued as $row): ?>
-                            <tr>
+                        <?php foreach($list_issued as $row): 
+                            // Tarih Kontrolü ve Renklendirme
+                            $plan_date = !empty($row['invoice_date']) ? $row['invoice_date'] : $row['date'];
+                            $today = date('Y-m-d');
+                            
+                            $row_class = '';
+                            $date_badge = '';
+
+                            if ($plan_date < $today) {
+                                $row_class = 'row-overdue'; // Gecikmiş
+                                $date_badge = '<span class="badge bg-danger">GECİKMİŞ</span>';
+                            } elseif ($plan_date == $today) {
+                                $row_class = 'row-today'; // Bugün
+                                $date_badge = '<span class="badge bg-warning text-dark">BUGÜN</span>';
+                            }
+                        ?>
+                            <tr class="<?php echo $row_class; ?>">
                                 <td class="fw-bold">#<?php echo $row['id']; ?></td>
-                                <td><?php echo date('d.m.Y', strtotime($row['date'])); ?></td>
+                                
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <i class="fa fa-calendar-alt text-muted"></i>
+                                        <strong><?php echo date('d.m.Y', strtotime($plan_date)); ?></strong>
+                                        <?php echo $date_badge; ?>
+                                    </div>
+                                    <small class="text-muted d-block mt-1">İşlem Tarihi: <?php echo date('d.m.Y', strtotime($row['date'])); ?></small>
+                                </td>
+
                                 <td>
                                     <div class="fw-bold"><?php echo guvenli_html($row['company_name']); ?></div>
                                     <small class="text-muted"><?php echo $row['tour_code'] ? $row['tour_code'] : ''; ?></small>
@@ -103,22 +129,19 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
                                         $rate = $row['exchange_rate'];
 
                                         if ($currency != 'TRY') {
-                                            // Dövizli İşlem
                                             if ($amount_orig <= 0 && $rate > 0) {
-                                                // Eğer orijinal tutar 0 ise, TL'den geri hesapla
                                                 $amount_orig = $amount_tl / $rate;
                                             }
                                             echo number_format($amount_orig, 2, ',', '.') . ' ' . $currency;
                                             echo '<br><small class="text-muted fs-6 fw-normal">(' . number_format($amount_tl, 2, ',', '.') . ' TL)</small>';
                                         } else {
-                                            // TL İşlem
                                             echo number_format($amount_tl, 2, ',', '.') . ' TL';
                                         }
                                     ?>
                                 </td>
 
                                 <td class="text-center">
-                                    <button class="btn btn-success btn-sm w-100 shadow-sm" onclick='openInvoiceModal(<?php echo json_encode($row); ?>)'>
+                                    <button class="btn btn-success btn-sm w-100 shadow-sm" onclick='openInvoiceModal(<?php echo json_encode($row); ?>, "<?php echo $plan_date; ?>")'>
                                         <i class="fa fa-upload"></i> Fatura Yükle
                                     </button>
                                 </td>
@@ -234,7 +257,7 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-bold">Fatura Tarihi</label>
-                                <input type="date" name="invoice_date" class="form-control" required value="<?php echo date('Y-m-d'); ?>">
+                                <input type="date" name="invoice_date" id="modal_invoice_date" class="form-control" required>
                             </div>
                         </div>
 
@@ -260,17 +283,20 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
 
     <script>
         $(document).ready(function() {
-            $('#tableIssued').DataTable({ "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" }, "paging": false, "info": false, "searching": false });
+            $('#tableIssued').DataTable({ "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" }, "paging": false, "info": false, "searching": false, "ordering": false });
             $('#tableWaiting').DataTable({ "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" }, "paging": false, "info": false });
         });
 
         var invoiceModal = new bootstrap.Modal(document.getElementById('invoiceModal'));
 
-        // Modal Açma
-        function openInvoiceModal(data) {
+        // Modal Açma (Planlanan Tarihi de alıyoruz)
+        function openInvoiceModal(data, planDate) {
             document.getElementById('trans_id').value = data.id;
             document.getElementById('info_company').innerText = data.company_name;
             
+            // Tarih Set Etme
+            document.getElementById('modal_invoice_date').value = planDate;
+
             // Modalda Gösterilecek Tutar (Akıllı Hesaplama)
             var amt = parseFloat(data.amount);
             var curr = data.currency || 'TRY';
@@ -288,25 +314,15 @@ $list_waiting = $pdo->query($sql_waiting)->fetchAll(PDO::FETCH_ASSOC);
             document.getElementById('info_tax').innerText = taxInfo;
 
             document.getElementById('invoiceForm').reset();
+            // Resetleyince tarih silinir, tekrar set et
+            setTimeout(() => { document.getElementById('modal_invoice_date').value = planDate; }, 100);
+            
             invoiceModal.show();
         }
 
-        // Fatura Yükleme (AJAX)
-        // DİKKAT: api-upload-invoice.php dosyası tutar (amount) bekliyorsa, buraya hidden input eklememiz gerekebilir.
-        // Ancak mevcut yapıda "Fatura Yükle" dediğimizde ana işlem tutarını kabul ediyorsak sorun yok.
-        // Eğer kullanıcı fatura tutarını değiştirebilsin istiyorsan modal'a input ekleyelim.
-        // Şu anki kodda kullanıcıdan tutar istemiyoruz, ana tutarı kabul ediyoruz.
-        
         $('#invoiceForm').on('submit', function(e) {
             e.preventDefault();
             var formData = new FormData(this);
-            
-            // Eğer api-upload-invoice.php, POST['invoice_amount'] bekliyorsa ve biz göndermezsek 0 olarak algılayabilir.
-            // Bu yüzden "invoice_amount" verisini de eklemeliyiz.
-            // Ama bu ekranda input yok. O zaman faturanın "tamamı" kesiliyor varsayımıyla ana tutarı gönderelim mi?
-            // Veya api-upload-invoice.php tarafında "eğer post gelmediyse ana tutarı kullan" mantığı var mı?
-            // GÜVENLİ OLAN: Kullanıcıya tutar sormaktır. 
-            // Şimdilik ana listeden işlem yaptığı için tam tutar varsayalım.
             
             $.ajax({
                 url: 'api-upload-invoice.php',

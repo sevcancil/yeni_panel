@@ -47,7 +47,7 @@ $doc_options = []; $channels = []; $channel_label = ""; $channel_db_col = ""; $a
 
 if ($parent['type'] == 'credit') {
     // TAHSİLAT
-    $doc_options = ['Dekont', 'Slip/Pos', 'Tahsilat Makbuzu', 'Müşteri Çeki', 'Nakit Tahsilat', 'Diğer'];
+    $doc_options = ['Faturaları', 'Dekont', 'Slip/Pos', 'Tahsilat Makbuzu', 'MM', 'Müşteri Çeki', 'Diğer'];
     $channels = $pdo->query("SELECT id, title FROM collection_channels ORDER BY title ASC")->fetchAll(PDO::FETCH_ASSOC);
     $channel_label = "Tahsilat Kanalı (Kasa/Banka)";
     $channel_db_col = "collection_channel_id";
@@ -56,7 +56,7 @@ if ($parent['type'] == 'credit') {
     $bg_class = "bg-success text-white";
 } else {
     // ÖDEME
-    $doc_options = ['Dekont', 'Tediye Makbuzu', 'Firma Çeki', 'Nakit Ödeme', 'Diğer'];
+    $doc_options = ['Faturamız', 'Dekont', 'Mail Order', 'Slip/Pos', 'Tediye Makbuzu', 'MM', 'Çek STH'];
     $channels = $pdo->query("SELECT id, title FROM payment_methods ORDER BY title ASC")->fetchAll(PDO::FETCH_ASSOC);
     $channel_label = "Ödeme Kaynağı (Kasa/Banka)";
     $channel_db_col = "payment_method_id";
