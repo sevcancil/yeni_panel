@@ -17,69 +17,71 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <style>
         .filter-input, .filter-select { width: 100%; padding: 3px; font-size: 0.8rem; border: 1px solid #ced4da; border-radius: 3px; }
         .dt-control { cursor: pointer; text-align: center; vertical-align: middle; color: #0d6efd; }
-        .action-icon { color: #d1d1d1; transition: all 0.2s ease-in-out; font-size: 1.2rem; cursor: pointer; }
-        .action-icon:hover { transform: scale(1.3); color: #888; }
-        .action-icon.active.approval { color: #198754 !important; }
-        .action-icon.active.priority { color: #dc3545 !important; } 
-        .action-icon.active.control  { color: #fd7e14 !important; }
-        .fa-file-invoice.text-primary { color: #0d6efd !important; } 
-        .fa-file-invoice.text-success { color: #198754 !important; } 
-        .disabled-btn { opacity: 0.2; cursor: not-allowed; pointer-events: none; }
-        #selection-bar { position: fixed; bottom: -100px; left: 0; width: 100%; background-color: #343a40; color: white; padding: 15px 40px; z-index: 1050; transition: bottom 0.3s; display: flex; justify-content: space-between; align-items: center; }
+        .dt-control:hover { color: #0a58ca; }
+        #selection-bar { position: fixed; bottom: -100px; left: 0; width: 100%; background-color: #343a40; color: white; padding: 15px 40px; z-index: 1050; transition: bottom 0.3s; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 -2px 10px rgba(0,0,0,0.2); }
         #selection-bar.show { bottom: 0; }
-        th { font-size: 0.9rem; white-space: nowrap; }
-        td { font-size: 0.9rem; vertical-align: middle; }
+        th { font-size: 0.85rem; white-space: nowrap; vertical-align: middle; }
+        td { font-size: 0.85rem; vertical-align: middle; }
         .date-range-container input { font-size: 0.75rem; padding: 2px 4px; }
         optgroup { font-weight: bold; color: #555; background-color: #f8f9fa; }
-        option { color: #000; background-color: #fff; padding: 5px; }
+        .cursor-pointer { cursor: pointer; }
     </style>
 </head>
 <body>
     <?php include 'includes/navbar.php'; ?>
 
-    <div class="container-fluid px-4">
+    <div class="container-fluid px-4 mt-4">
         
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2 class="mb-0">Finansal Operasyonlar</h2>
-            <a href="transaction-add.php" class="btn btn-success"><i class="fa fa-plus"></i> Yeni Talep Oluştur</a>
+            <h2 class="mb-0 text-dark fw-bold"><i class="fa fa-list-ul text-secondary"></i> Finansal Operasyonlar</h2>
+            <div class="d-flex gap-2">
+                <a href="payment-approval.php" class="btn btn-outline-dark"><i class="fa fa-check-double"></i> Ödeme Onayı</a>
+                <a href="transaction-add.php" class="btn btn-success shadow-sm"><i class="fa fa-plus"></i> Yeni Talep</a>
+            </div>
         </div>
 
-        <div class="card shadow">
+        <div class="card shadow border-0">
             <div class="card-body p-2">
                 <div class="table-responsive">
-                    <table id="paymentTable" class="table table-bordered table-hover table-sm w-100">
+                    <table id="paymentTable" class="table table-bordered table-hover table-sm w-100 align-middle">
                         <thead class="table-light">
                             <tr>
-                                <th width="20"></th> <th width="80">Durum</th> <th width="120">İşlemler</th> 
-                                <th width="30">ID</th> <th width="80">Belge</th> <th width="80">Tarih</th> 
-                                <th>Bölüm</th> <th>Cari / Firma</th> <th>Tur Kodu</th> 
-                                <th>Fatura No</th> <th>Açıklama</th> 
-                                <th class="text-end">Tutar (TL)</th> <th class="text-end">Döviz</th> <th width="40">Edit</th> 
+                                <th width="10"></th> 
+                                <th width="120">Durum</th> 
+                                <th width="30" class="text-center">Onay</th> <th width="60">ID</th> 
+                                <th width="60">Belge</th> 
+                                <th width="80">Tarih</th> 
+                                <th>Bölüm</th> 
+                                <th>Cari / Firma</th> 
+                                <th>Tur Kodu</th> 
+                                <th>Fatura No</th> 
+                                <th>Açıklama</th> 
+                                <th class="text-end">Tutar (TL)</th> 
+                                <th class="text-end">Döviz</th> 
+                                <th width="30" class="text-center"><i class="fa fa-edit"></i></th> 
+                                <th width="30" class="text-center"><i class="fa fa-trash"></i></th> 
+                                <th width="30" class="text-center"><i class="fa fa-history"></i></th> 
                             </tr>
                             <tr class="filters">
                                 <td></td> 
                                 <td>
-                                    <select class="filter-select fw-bold text-dark" data-col-index="1" style="min-width: 150px;">
+                                    <select class="filter-select fw-bold text-dark" data-col-index="1">
                                         <option value="">Tümü</option>
-                                        <optgroup label="GELİR (TAHSİLAT)">
-                                            <option value="income_invoice_paid">✅ Fatura Kesildi + Tahsil Edildi</option>
-                                            <option value="income_invoice_unpaid">⏳ Fatura Kesildi (Tahsilat Bekliyor)</option>
-                                            <option value="income_paid_no_invoice" class="text-danger">(!) Tahsil Edildi / Faturasız</option>
-                                        </optgroup>
-                                        <optgroup label="GİDER (ÖDEME)">
-                                            <option value="expense_invoice_paid">✅ Fatura Alındı + Ödendi</option>
-                                            <option value="expense_invoice_unpaid">⏳ Fatura Alındı (Ödeme Bekliyor)</option>
-                                            <option value="expense_paid_no_invoice" class="text-danger">(!) Ödendi / Faturasız</option>
-                                        </optgroup>
-                                        <optgroup label="GENEL">
-                                            <option value="partial">Kısmi Ödeme</option>
-                                            <option value="planned">Planlandı</option>
-                                        </optgroup>
+                                        <optgroup label="GELİR"><option value="income_invoice_paid">Tahsil Edildi</option><option value="income_invoice_unpaid">Bekliyor</option></optgroup>
+                                        <optgroup label="GİDER"><option value="expense_invoice_paid">Ödendi</option><option value="expense_invoice_unpaid">Bekliyor</option></optgroup>
+                                        <optgroup label="DİĞER"><option value="partial">Kısmi</option><option value="planned">Planlandı</option></optgroup>
                                     </select>
                                 </td> 
-                                <td><select class="filter-select" data-col-index="2"><option value="">Filtrele...</option><option value="approved">Onaylılar</option><option value="priority">Öncelikliler</option><option value="control">Kontrol</option></select></td> 
+                                <td>
+                                    <select class="filter-select text-center" data-col-index="2">
+                                        <option value="">-</option>
+                                        <option value="approved">✔</option>
+                                        <option value="pending">⏳</option>
+                                        <option value="rejected">✖</option>
+                                    </select>
+                                </td>
                                 <td><input type="text" class="filter-input" placeholder="ID" data-col-index="3"></td>
-                                <td><select class="filter-select" data-col-index="4"><option value="">Tümü</option><option value="invoice_order">Fatura (Gelir)</option><option value="payment_order">Ödeme (Gider)</option></select></td>
+                                <td><select class="filter-select" data-col-index="4"><option value="">Tümü</option><option value="invoice_order">Fatura</option><option value="payment_order">Ödeme</option></select></td>
                                 <td>
                                     <div class="d-flex flex-column gap-1 date-range-container">
                                         <input type="date" class="form-control form-control-sm date-filter" id="date_start">
@@ -87,11 +89,11 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                                     </div>
                                 </td>
                                 <td><input type="text" class="filter-input" placeholder="Bölüm" data-col-index="6"></td>
-                                <td><input type="text" class="filter-input" placeholder="Cari Ara..." data-col-index="7"></td>
-                                <td><input type="text" class="filter-input" placeholder="Tur Kodu" data-col-index="8"></td>
-                                <td><input type="text" class="filter-input" placeholder="Fatura No" data-col-index="9"></td> 
+                                <td><input type="text" class="filter-input" placeholder="Cari..." data-col-index="7"></td>
+                                <td><input type="text" class="filter-input" placeholder="Tur" data-col-index="8"></td>
+                                <td><input type="text" class="filter-input" placeholder="Fatura" data-col-index="9"></td> 
                                 <td><input type="text" class="filter-input" placeholder="Açıklama" data-col-index="10"></td>
-                                <td></td> <td></td> <td></td> 
+                                <td></td> <td></td> <td></td> <td></td> <td></td>
                             </tr>
                         </thead>
                         <tbody></tbody>
@@ -113,15 +115,14 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
         </div>
     </div>
 
-    <div class="modal fade" id="editModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">İşlem</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="editModalBody"></div></div></div></div>
-    <div class="modal fade" id="logModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-info text-white"><h5 class="modal-title">Tarihçe</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="logModalBody"></div></div></div></div>
+    <div class="modal fade" id="editModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">İşlem Düzenle</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="editModalBody"></div></div></div></div>
+    <div class="modal fade" id="logModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-info text-white"><h5 class="modal-title">İşlem Tarihçesi</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="logModalBody"></div></div></div></div>
     
     <div class="modal fade" id="invoiceModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header bg-success text-white"><h5 class="modal-title">Fatura Girişi</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
                 <div class="modal-body">
-                    <div class="alert alert-light border mb-3 p-2 small"><strong id="inv_company"></strong><br>Tutar: <span class="text-success fw-bold" id="inv_amount"></span></div>
                     <form id="invoiceForm" enctype="multipart/form-data">
                         <input type="hidden" name="id" id="inv_trans_id">
                         <div class="mb-3"><label class="form-label fw-bold">Fatura No</label><input type="text" name="invoice_no" id="inv_no_input" class="form-control" required></div>
@@ -141,56 +142,25 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
-        // --- SEÇİM VE TOPLAMA MANTIĞI ---
-        var selectedIds = [];
-
-        // Dinamik olarak oluşturulan checkboxları dinle
-        $(document).on('change', '.row-select', function() {
-            calculateSelection();
-        });
-
-        function calculateSelection() {
-            selectedIds = [];
-            var total = 0.0;
-
-            $('.row-select:checked').each(function() {
-                var id = $(this).data('id');
-                // data-amount, PHP'den gelen "kalan tutar"dır.
-                var amt = parseFloat($(this).data('amount')) || 0;
-                selectedIds.push(id);
-                total += amt;
+        // Yönetici Notunu Göster
+        window.showNote = function(note) {
+            Swal.fire({
+                title: 'Yönetici Notu',
+                text: note || 'Not girilmemiş.',
+                icon: 'info',
+                confirmButtonText: 'Tamam'
             });
-
-            $('#selected-count').text(selectedIds.length);
-            $('#selected-total').text(total.toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' TL');
-
-            var bar = $('#selection-bar');
-            if(selectedIds.length > 0) {
-                bar.addClass('show');
-            } else {
-                bar.removeClass('show');
-            }
-        }
-
-        // --- BİRLEŞTİR BUTONU ---
-        window.openMergeModal = function() {
-            if(selectedIds.length < 1) {
-                Swal.fire('Uyarı', 'Lütfen en az bir kayıt seçin.', 'warning');
-                return;
-            }
-            var idsStr = selectedIds.join(',');
-            var modal = new bootstrap.Modal(document.getElementById('editModal'));
-            modal.show();
-            $('#editModalBody').html('<div class="text-center p-5"><i class="fa fa-spinner fa-spin fa-3x"></i><br>Yükleniyor...</div>');
-            $('#editModalBody').load('transaction-merge.php?ids=' + idsStr);
         };
 
         function format(d) {
-            var idHtml = d[3]; 
-            var id = idHtml.match(/data-id="(\d+)"/) ? idHtml.match(/data-id="(\d+)"/)[1] : idHtml.replace(/[^0-9]/g, '');
-            var div = $('<div/>').addClass('p-3 bg-light border rounded m-2').html('<div class="text-center"><i class="fa fa-spinner fa-spin"></i> Yükleniyor...</div>');
-            $.get('get-child-transactions.php?parent_id=' + id, function(content){ div.html(content); }).fail(function(){ div.html('Hata.'); });
-            return div;
+            var div = document.createElement('div');
+            div.innerHTML = d[3]; // ID Sütunu (Index 3 oldu)
+            var idInput = div.querySelector('input');
+            var id = idInput ? idInput.value : '';
+            
+            var contentDiv = $('<div/>').addClass('p-3 bg-light border rounded m-2').html('<div class="text-center"><i class="fa fa-spinner fa-spin"></i> Hareketler yükleniyor...</div>');
+            if(id) $.get('get-child-transactions.php?parent_id=' + id, function(content){ contentDiv.html(content); });
+            return contentDiv;
         }
 
         $(document).ready(function() {
@@ -198,12 +168,24 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
                 "processing": true, "serverSide": true, "orderCellsTop": true,
                 "ajax": { "url": "api-payments-list.php", "type": "POST" },
                 "pageLength": 50, "lengthMenu": [[50, 100, 250], [50, 100, 250]],
-                "order": [[ 5, "desc" ]],
+                "order": [[ 5, "desc" ]], // Tarih Indexi
                 "columns": [
-                    { "className": 'dt-control', "orderable": false, "data": 0, "defaultContent": '<i class="fa fa-plus-circle fa-lg"></i>' }, 
-                    { "data": 1 }, { "data": 2, "orderable": false }, { "data": 3 }, { "data": 4 }, 
-                    { "data": 5 }, { "data": 6 }, { "data": 7 }, { "data": 8 }, { "data": 9 }, 
-                    { "data": 10 }, { "data": 11, "className": "text-end" }, { "data": 12, "className": "text-end" }, { "data": 13, "orderable": false } 
+                    { "className": 'dt-control', "orderable": false, "data": 0, "defaultContent": '<i class="fa fa-plus-circle fa-lg text-primary"></i>' }, 
+                    { "data": 1 }, // Durum
+                    { "data": 2, "className": "text-center" }, // ONAY (YENİ)
+                    { "data": 3 }, // ID
+                    { "data": 4 }, // Belge
+                    { "data": 5 }, // Tarih
+                    { "data": 6 }, // Bölüm
+                    { "data": 7 }, // Cari
+                    { "data": 8 }, // Tur
+                    { "data": 9 }, // Fatura
+                    { "data": 10 }, // Açıklama
+                    { "data": 11, "className": "text-end" }, // Tutar
+                    { "data": 12, "className": "text-end" }, // Döviz
+                    { "data": 13, "orderable": false, "className": "text-center" }, // Edit
+                    { "data": 14, "orderable": false, "className": "text-center" }, // Sil
+                    { "data": 15, "orderable": false, "className": "text-center" }  // Geçmiş
                 ],
                 "language": { "url": "//cdn.datatables.net/plug-ins/1.13.4/i18n/tr.json" },
                 initComplete: function () {
@@ -220,46 +202,60 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             $('#paymentTable tbody').on('click', 'td.dt-control', function () {
                 var tr = $(this).closest('tr');
                 var row = table.row(tr);
-                var icon = $(this).find('i');
-                if (row.child.isShown()) { row.child.hide(); tr.removeClass('shown'); icon.removeClass('fa-minus-circle').addClass('fa-plus-circle'); }
-                else { row.child(format(row.data())).show(); tr.addClass('shown'); icon.removeClass('fa-plus-circle').addClass('fa-minus-circle'); }
+                if (row.child.isShown()) { row.child.hide(); tr.removeClass('shown'); }
+                else { row.child(format(row.data())).show(); tr.addClass('shown'); }
             });
+
+            $('#paymentTable tbody').on('click', 'tr', function (e) {
+                if ($(e.target).closest('a, button, input[type="checkbox"], .dt-control, i.fa-info-circle').length) return;
+                var checkbox = $(this).find('.row-select');
+                if(checkbox.length) { checkbox.prop('checked', !checkbox.prop('checked')); calculateSelection(); }
+            });
+
+            $(document).on('change', '.row-select', function() { calculateSelection(); });
         });
 
-        // Fatura Modal İşlemleri
-        var invoiceModal = new bootstrap.Modal(document.getElementById('invoiceModal'));
-        window.openInvoiceModal = function(data) {
-            document.getElementById('inv_trans_id').value = data.id;
-            document.getElementById('inv_company').innerText = data.company_name || '';
-            var amt = (data.original_amount > 0 && data.currency != 'TRY') ? data.original_amount + ' ' + data.currency : data.amount + ' TL';
-            document.getElementById('inv_amount').innerText = amt;
-            document.getElementById('inv_no_input').value = data.invoice_no || '';
-            invoiceModal.show();
+        var selectedIds = [];
+        function calculateSelection() {
+            selectedIds = [];
+            var total = 0.0;
+            $('.row-select:checked').each(function() {
+                selectedIds.push($(this).data('id'));
+                total += parseFloat($(this).data('amount')) || 0;
+            });
+            $('#selected-count').text(selectedIds.length);
+            $('#selected-total').text(total.toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' TL');
+            if(selectedIds.length > 0) $('#selection-bar').addClass('show'); else $('#selection-bar').removeClass('show');
+        }
+
+        window.openMergeModal = function() {
+            var modal = new bootstrap.Modal(document.getElementById('editModal'));
+            modal.show();
+            $('#editModalBody').load('transaction-merge.php?ids=' + selectedIds.join(','));
         };
 
-        $('#invoiceForm').on('submit', function(e) {
-            e.preventDefault();
-            $.ajax({
-                url: 'api-upload-invoice.php', type: 'POST', data: new FormData(this), contentType: false, processData: false, dataType: 'json',
-                success: function(res) {
-                    if(res.status === 'success') { invoiceModal.hide(); Swal.fire('Başarılı','Fatura kaydedildi.','success').then(()=>$('#paymentTable').DataTable().ajax.reload(null,false)); }
-                    else Swal.fire('Hata',res.message,'error');
-                }
-            });
-        });
-
         window.deleteTransaction = function(id) {
-            Swal.fire({ title: 'Silinsin mi?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Evet' }).then((r) => {
+            Swal.fire({ title: 'Silinsin mi?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Sil' }).then((r) => {
                 if (r.isConfirmed) $.post('transaction-delete.php', { id: id }, function(res) { 
                     if(res.status==='success') $('#paymentTable').DataTable().ajax.reload(null,false); 
                 }, 'json');
             });
         };
-        window.toggleStatus = function(id, type) {
-            $.post('api-payment-actions.php', { id: id, action: 'toggle_' + type }, function(res) {
-                if(res.status==='success') $('#paymentTable').DataTable().ajax.reload(null,false);
-            }, 'json');
+        
+        var invoiceModal = new bootstrap.Modal(document.getElementById('invoiceModal'));
+        window.openInvoiceModal = function(data) {
+            document.getElementById('inv_trans_id').value = data.id;
+            document.getElementById('inv_no_input').value = data.invoice_no || '';
+            invoiceModal.show();
         };
+        $('#invoiceForm').on('submit', function(e) {
+            e.preventDefault();
+            $.ajax({ url: 'api-upload-invoice.php', type: 'POST', data: new FormData(this), contentType: false, processData: false, dataType: 'json', success: function(res) {
+                if(res.status==='success') { invoiceModal.hide(); Swal.fire('Başarılı','Fatura kaydedildi.','success').then(()=>$('#paymentTable').DataTable().ajax.reload(null,false)); }
+                else Swal.fire('Hata',res.message,'error');
+            }});
+        });
+
         window.openEditModal = function(id) { new bootstrap.Modal(document.getElementById('editModal')).show(); $('#editModalBody').load('transaction-edit.php?id=' + id); };
         window.openLogModal = function(id) { new bootstrap.Modal(document.getElementById('logModal')).show(); $('#logModalBody').load('get-log-history.php?id=' + id); };
     </script>

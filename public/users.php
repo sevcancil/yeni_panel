@@ -41,7 +41,9 @@ $perm_list = [
     'manage_finance' => 'Finans Yönetimi (Ödeme/Tahsilat Gir)',
     'approve_payment' => 'Ödeme Onaylama',
     'view_reports' => 'Raporları Görüntüleme',
-    'delete_data' => 'Kayıt Silme (Dikkat)'
+    'delete_data' => 'Kayıt Silme (Dikkat)',
+    'can_edit_approved' => 'Onaylı İşlemi Düzenleme'
+    
 ];
 ?>
 <!DOCTYPE html>

@@ -13,25 +13,14 @@ $module = isset($_REQUEST['module']) ? $_REQUEST['module'] : 'transaction'; // V
 if ($id <= 0) exit('<div class="alert alert-warning">Kayıt bulunamadı.</div>');
 
 try {
-    // 1. ADIM: KAYDI İLK OLUŞTURAN KİŞİYİ (DATABASE SÜTUNUNDAN) BUL
-    // Loglar silinse bile bu bilgi customers/transactions tablosunda 'created_by' sütununda durur.
+    // 1. ADIM: KAYDI İLK OLUŞTURAN KİŞİYİ BUL
     $creator_name = "Bilinmiyor";
     $creation_date = "-";
 
     if ($module == 'customer') {
-        $stmtCreator = $pdo->prepare("
-            SELECT u.full_name, u.username, c.created_at 
-            FROM customers c 
-            LEFT JOIN users u ON c.created_by = u.id 
-            WHERE c.id = ?
-        ");
+        $stmtCreator = $pdo->prepare("SELECT u.full_name, u.username, c.created_at FROM customers c LEFT JOIN users u ON c.created_by = u.id WHERE c.id = ?");
     } elseif ($module == 'transaction') {
-        $stmtCreator = $pdo->prepare("
-            SELECT u.full_name, u.username, t.created_at 
-            FROM transactions t 
-            LEFT JOIN users u ON t.created_by = u.id 
-            WHERE t.id = ?
-        ");
+        $stmtCreator = $pdo->prepare("SELECT u.full_name, u.username, t.created_at FROM transactions t LEFT JOIN users u ON t.created_by = u.id WHERE t.id = ?");
     }
 
     if (isset($stmtCreator)) {
@@ -43,8 +32,11 @@ try {
         }
     }
 
-    // 2. ADIM: LOGLARI ÇEK (Dynamic Module ile)
-    // Artık 'transaction' yerine gelen $module değişkenini kullanıyoruz.
+    // 2. ADIM: LOGLARI ÇEK
+    // record_id VE parent_id loglarını birleştiriyoruz (Alt işlem logları da görünsün diye)
+    // Eğer transaction ise hem kendi ID'si hem de bu ID'nin parent olduğu child işlemlerin loglarını çekebiliriz.
+    // Ancak basitlik için şimdilik sadece record_id'ye bakıyoruz.
+    
     $sql = "SELECT l.*, u.full_name, u.username 
             FROM activity_logs l 
             LEFT JOIN users u ON l.user_id = u.id 
@@ -92,9 +84,9 @@ try {
                         if($log['action'] == 'create') { $badge_class = 'bg-success'; $icon = 'fa-plus'; }
                         if($log['action'] == 'update') { $badge_class = 'bg-warning text-dark'; $icon = 'fa-edit'; }
                         if($log['action'] == 'delete') { $badge_class = 'bg-danger'; $icon = 'fa-trash'; }
+                        if($log['action'] == 'approve') { $badge_class = 'bg-primary'; $icon = 'fa-check-double'; }
                         
-                        // Kullanıcı Adı (Full name varsa onu, yoksa username)
-                        $user_name = !empty($log['full_name']) ? $log['full_name'] : ($log['username'] ?? 'Silinmiş Kullanıcı');
+                        $user_name = !empty($log['full_name']) ? $log['full_name'] : ($log['username'] ?? 'Sistem');
                     ?>
                     <tr>
                         <td><?php echo date('d.m.Y H:i', strtotime($log['created_at'])); ?></td>
@@ -113,8 +105,8 @@ try {
                 <tr>
                     <td colspan="4" class="text-center text-muted py-4">
                         <i class="fa fa-history fa-2x mb-2"></i><br>
-                        Bu işlem için henüz kayıtlı bir aktivite logu yok.<br>
-                        <small>(Ancak yukarıdaki oluşturan bilgisi veritabanından çekilmiştir)</small>
+                        Bu işlem için henüz ek bir aktivite logu yok.<br>
+                        <small>(Sadece oluşturma bilgisi mevcut)</small>
                     </td>
                 </tr>
             <?php endif; ?>

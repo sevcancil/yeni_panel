@@ -10,7 +10,9 @@ if (!isset($_SESSION['user_id'])) {
     exit('<div class="alert alert-danger">Yetkisiz erişim.</div>'); 
 }
 
-$id = isset($_REQUEST['id']) ? (int)$_REQUEST['id'] : 0;
+$role = $_SESSION['role'] ?? 'user';
+// Onaylı işlemi düzenleme yetkisi (Burayı kendi yetki sistemine göre ayarlayabilirsin)
+$can_edit_approved = ($role === 'admin' || $role === 'muhasebe');
 
 // --- GÜNCELLEME İŞLEMİ (AJAX POST) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -22,12 +24,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $post_id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
         
-        // Eski veriyi çek (Değişiklik kontrolü için)
+        // 1. ESKİ VERİYİ ÇEK (Değişiklik kontrolü ve Güvenlik için)
         $stmt_old = $pdo->prepare("SELECT * FROM transactions WHERE id = ?");
         $stmt_old->execute([$post_id]);
         $old_data = $stmt_old->fetch(PDO::FETCH_ASSOC);
         
         if (!$old_data) throw new Exception("İşlem bulunamadı.");
+
+        // 2. ONAY KONTROLÜ (GÜVENLİK)
+        if ($old_data['approval_status'] === 'approved' && !$can_edit_approved) {
+            throw new Exception("Bu işlem onaylanmıştır. Düzenleme yetkiniz yok.");
+        }
 
         // Verileri Al
         $date = $_POST['date'] ?? date('Y-m-d');
@@ -88,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // GÜNCELLEME SORGUSU
+        // 3. GÜNCELLEME SORGUSU
         $sql = "UPDATE transactions SET 
                 date=?, customer_id=?, tour_code_id=?, department_id=?, 
                 amount=?, original_amount=?, currency=?, exchange_rate=?, description=?, 
@@ -105,26 +112,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $post_id
         ]);
 
-        // --- LOGLAMA MANTIĞI ---
-        $log_msg = "Kayıt güncellendi.";
+        // 4. DETAYLI LOG OLUŞTURMA (Diff Logic)
+       $changes = [];
 
-        // Fatura Numarası Değiştiyse Logla
-        if ($old_data['invoice_no'] != $invoice_no) {
-            if (empty($old_data['invoice_no']) && !empty($invoice_no)) {
-                // Yeni Fatura Girildi
-                $log_msg = "Fatura Girildi: $invoice_no (" . number_format($amount_tl, 2) . " TL)";
-                
-                // İsteğe bağlı: Cari hareketlerine de yansısın diye ana log sistemine ekstra detay eklenebilir
-                // Ancak transaction logları zaten caride görünüyor.
-            } elseif (!empty($old_data['invoice_no']) && empty($invoice_no)) {
-                // Fatura Silindi
-                $log_msg = "Fatura Silindi (Eski No: " . $old_data['invoice_no'] . ")";
-            } else {
-                // Fatura Değişti
-                $log_msg = "Fatura No Güncellendi: " . $old_data['invoice_no'] . " -> " . $invoice_no;
-            }
+        if ($old_data['date'] != $date) 
+            $changes[] = "Tarih: " . date('d.m.Y', strtotime($old_data['date'])) . " -> " . date('d.m.Y', strtotime($date));
+        
+        // Tutar
+        if (abs((float)$old_data['amount'] - $amount_tl) > 0.01) 
+            $changes[] = "Tutar: " . number_format($old_data['amount'], 2) . " -> " . number_format($amount_tl, 2);
+        
+        // Döviz
+        if ($old_data['currency'] != $currency) 
+            $changes[] = "Döviz: {$old_data['currency']} -> $currency";
+        
+        // --- CARİ İSİM LOGLAMA (GÜNCELLENDİ) ---
+        if ($old_data['customer_id'] != $customer_id) {
+            // Eski Cari İsmini Bul
+            $old_name_stmt = $pdo->prepare("SELECT company_name FROM customers WHERE id = ?");
+            $old_name_stmt->execute([$old_data['customer_id']]);
+            $old_name = $old_name_stmt->fetchColumn() ?: 'Bilinmiyor';
+
+            // Yeni Cari İsmini Bul
+            $new_name_stmt = $pdo->prepare("SELECT company_name FROM customers WHERE id = ?");
+            $new_name_stmt->execute([$customer_id]);
+            $new_name = $new_name_stmt->fetchColumn() ?: 'Bilinmiyor';
+
+            $changes[] = "Cari: $old_name -> $new_name";
         }
+        
+        // --- TUR KODU İSİM LOGLAMA (GÜNCELLENDİ) ---
+        // Not: Tur kodu boş (NULL) olabilir, bunu kontrol etmeliyiz.
+        if ($old_data['tour_code_id'] != $tour_code_id) {
+            $old_code = 'Yok';
+            if (!empty($old_data['tour_code_id'])) {
+                $stmt_tc = $pdo->prepare("SELECT code FROM tour_codes WHERE id = ?");
+                $stmt_tc->execute([$old_data['tour_code_id']]);
+                $old_code = $stmt_tc->fetchColumn() ?: 'Silinmiş';
+            }
 
+            $new_code = 'Yok';
+            if (!empty($tour_code_id)) {
+                $stmt_tc = $pdo->prepare("SELECT code FROM tour_codes WHERE id = ?");
+                $stmt_tc->execute([$tour_code_id]);
+                $new_code = $stmt_tc->fetchColumn() ?: 'Bilinmiyor';
+            }
+
+            $changes[] = "Tur Kodu: $old_code -> $new_code";
+        }
+            
+        if ($old_data['description'] != $description) 
+            $changes[] = "Açıklama Güncellendi";
+
+        if ($old_data['invoice_no'] != $invoice_no) 
+            $changes[] = "Fatura No: '{$old_data['invoice_no']}' -> '$invoice_no'";
+
+        $log_msg = empty($changes) ? "Kayıt güncellendi (Detay yok)" : "Düzenlendi: " . implode(', ', $changes);
+        
+        // Logu Kaydet
         log_action($pdo, 'transaction', $post_id, 'update', $log_msg);
 
         ob_end_clean();
@@ -138,12 +183,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// --- FORM GÖSTERİMİ ---
+// --- FORM GÖSTERİMİ (GET) ---
+$id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $stmt = $pdo->prepare("SELECT * FROM transactions WHERE id = ?");
 $stmt->execute([$id]);
 $t = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$t) exit('<div class="alert alert-danger">Kayıt bulunamadı.</div>');
+
+// Onaylı İşlem Kontrolü (Formu göstermeden önce)
+if ($t['approval_status'] === 'approved' && !$can_edit_approved) {
+    exit('<div class="alert alert-warning text-center p-4">
+            <i class="fa fa-lock fa-3x mb-3 text-warning"></i><br>
+            <strong>Bu işlem onaylanmıştır.</strong><br>
+            Onaylanan işlemler üzerinde değişiklik yapılamaz.<br>
+            <small class="text-muted">Değişiklik için yöneticinizle görüşün.</small>
+          </div>');
+}
 
 $customers = $pdo->query("SELECT id, company_name FROM customers ORDER BY company_name")->fetchAll(PDO::FETCH_ASSOC);
 $projects = $pdo->query("SELECT id, code FROM tour_codes WHERE status='active' ORDER BY code DESC")->fetchAll(PDO::FETCH_ASSOC);
@@ -364,11 +420,13 @@ $display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
                     var modal = bootstrap.Modal.getInstance(modalEl);
                     modal.hide();
                     
-                    // Ana Tabloyu Yenile
+                    // Ana Tabloyu Yenile (Nereden açıldığına bakarak)
                     if(window.parent && window.parent.jQuery && window.parent.jQuery('#paymentTable').length) {
                         window.parent.jQuery('#paymentTable').DataTable().ajax.reload(null, false); 
                     } else if ($('#paymentTable').length) {
                         $('#paymentTable').DataTable().ajax.reload(null, false);
+                    } else if ($('#approvalTable').length) { // Onay sayfasından açıldıysa orayı da yenile
+                        $('#approvalTable').DataTable().ajax.reload(null, false);
                     }
                     
                     Swal.fire({ icon: 'success', title: 'Başarılı', text: res.message, timer: 1500, showConfirmButton: false });

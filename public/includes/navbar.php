@@ -181,6 +181,8 @@ if (file_exists($alerts_file)) {
                 </a>
             </li>
 
+
+
             <li>
                 <a href="projects.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'projects.php' ? 'active' : ''; ?>" title="Tur Kodları">
                     <i class="fa fa-plane-departure"></i> <span>Tur Kodları</span>
@@ -208,6 +210,14 @@ if (file_exists($alerts_file)) {
             <?php if(isset($_SESSION['role']) && $_SESSION['role'] == 'admin'): ?>
                 <div class="sidebar-heading text-danger">YÖNETİM</div>
                 
+                <?php if(isset($_SESSION['role']) && ($_SESSION['role'] == 'admin' || $_SESSION['role'] == 'muhasebe')): ?>
+                    <li>
+                        <a href="payment-approval.php" class="nav-link text-danger <?php echo basename($_SERVER['PHP_SELF']) == 'payment-approval.php' ? 'active' : ''; ?>" title="Ödeme Onay Ekranı">
+                            <i class="fa fa-check-double"></i> <span>Ödeme Onayı</span>
+                        </a>
+                    </li>
+                <?php endif; ?>
+
                 <li>
                     <a href="channels.php" class="nav-link text-danger <?php echo basename($_SERVER['PHP_SELF']) == 'channels.php' ? 'active' : ''; ?>" title="Kasa/Banka">
                         <i class="fa fa-wallet"></i> <span>Kasa/Banka</span>
