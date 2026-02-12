@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Anamakine: 127.0.0.1
--- Üretim Zamanı: 16 Oca 2026, 14:10:30
+-- Üretim Zamanı: 12 Şub 2026, 08:00:49
 -- Sunucu sürümü: 10.4.32-MariaDB
 -- PHP Sürümü: 8.2.12
 
@@ -53,6 +53,29 @@ CREATE TABLE `collection_channels` (
 -- --------------------------------------------------------
 
 --
+-- Tablo için tablo yapısı `company_cards`
+--
+
+CREATE TABLE `company_cards` (
+  `id` int(11) NOT NULL,
+  `bank_name` varchar(100) NOT NULL,
+  `card_holder` varchar(100) NOT NULL,
+  `card_number_enc` text NOT NULL,
+  `expiry_date` varchar(5) NOT NULL,
+  `cvc_enc` text NOT NULL,
+  `card_type` enum('visa','mastercard','amex','troy') DEFAULT 'visa',
+  `color_theme` varchar(20) DEFAULT 'bg-dark',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `ownership` enum('company','personal') DEFAULT 'company',
+  `total_limit` decimal(15,2) DEFAULT 0.00,
+  `available_balance` decimal(15,2) DEFAULT 0.00,
+  `is_blocked` tinyint(1) DEFAULT 0,
+  `block_reason` varchar(255) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Tablo için tablo yapısı `currencies`
 --
 
@@ -79,6 +102,7 @@ CREATE TABLE `customers` (
   `tax_number` varchar(50) DEFAULT NULL,
   `phone` varchar(20) DEFAULT NULL,
   `email` varchar(100) DEFAULT NULL,
+  `created_by` int(11) DEFAULT NULL,
   `address` text DEFAULT NULL,
   `current_balance` decimal(15,2) DEFAULT 0.00,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -164,6 +188,7 @@ CREATE TABLE `tour_codes` (
   `id` int(11) NOT NULL,
   `code` varchar(50) NOT NULL,
   `name` varchar(255) NOT NULL,
+  `department_id` int(11) DEFAULT NULL,
   `employer` varchar(255) DEFAULT NULL,
   `start_date` date DEFAULT NULL,
   `end_date` date DEFAULT NULL,
@@ -182,10 +207,14 @@ CREATE TABLE `transactions` (
   `parent_id` int(11) DEFAULT NULL,
   `customer_id` int(11) NOT NULL,
   `department_id` int(11) DEFAULT NULL,
+  `created_by` int(11) DEFAULT NULL,
   `payment_channel_id` int(11) DEFAULT NULL,
+  `collection_channel_id` int(11) DEFAULT NULL,
+  `payment_method_id` int(11) DEFAULT NULL,
   `tour_code_id` int(11) DEFAULT NULL,
-  `type` enum('debt','credit') NOT NULL,
-  `doc_type` enum('invoice_order','payment_order') DEFAULT 'invoice_order',
+  `type` enum('debt','credit','payment_out','payment_in','invoice') NOT NULL,
+  `doc_type` enum('invoice_order','payment_order','invoice') DEFAULT 'invoice_order',
+  `document_type` varchar(100) DEFAULT NULL,
   `payment_status` enum('paid','unpaid') DEFAULT 'paid',
   `amount` decimal(15,2) NOT NULL,
   `currency` varchar(3) DEFAULT 'TRY',
@@ -198,11 +227,17 @@ CREATE TABLE `transactions` (
   `invoice_date` date DEFAULT NULL,
   `due_date` date DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `is_approved` tinyint(1) DEFAULT 0,
-  `is_priority` tinyint(1) DEFAULT 0,
-  `needs_control` tinyint(1) DEFAULT 0,
   `recipient_bank_id` int(11) DEFAULT NULL,
-  `invoice_status` varchar(20) DEFAULT 'pending'
+  `invoice_status` varchar(20) DEFAULT 'pending',
+  `file_path` varchar(255) DEFAULT NULL,
+  `needs_invoice` tinyint(1) DEFAULT 0 COMMENT '1: Fatura Kesilecek, 0: Onay Bekliyor',
+  `invoice_details` longtext DEFAULT NULL COMMENT 'JSON formatında fatura listesi',
+  `remaining_invoice_amount` decimal(15,2) DEFAULT 0.00 COMMENT 'Faturası kesilmeyen kalan tutar',
+  `is_deleted` tinyint(1) DEFAULT 0,
+  `approval_status` enum('pending','approved','correction_needed','rejected') DEFAULT 'pending',
+  `priority` enum('low','medium','high') DEFAULT 'medium',
+  `planned_date` date DEFAULT NULL,
+  `admin_note` text DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -236,6 +271,12 @@ ALTER TABLE `activity_logs`
 -- Tablo için indeksler `collection_channels`
 --
 ALTER TABLE `collection_channels`
+  ADD PRIMARY KEY (`id`);
+
+--
+-- Tablo için indeksler `company_cards`
+--
+ALTER TABLE `company_cards`
   ADD PRIMARY KEY (`id`);
 
 --
@@ -279,7 +320,8 @@ ALTER TABLE `payment_methods`
 -- Tablo için indeksler `tour_codes`
 --
 ALTER TABLE `tour_codes`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_tour_dept` (`department_id`);
 
 --
 -- Tablo için indeksler `transactions`
@@ -314,6 +356,12 @@ ALTER TABLE `activity_logs`
 -- Tablo için AUTO_INCREMENT değeri `collection_channels`
 --
 ALTER TABLE `collection_channels`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- Tablo için AUTO_INCREMENT değeri `company_cards`
+--
+ALTER TABLE `company_cards`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
@@ -375,12 +423,17 @@ ALTER TABLE `customer_banks`
   ADD CONSTRAINT `customer_banks_ibfk_1` FOREIGN KEY (`customer_id`) REFERENCES `customers` (`id`) ON DELETE CASCADE;
 
 --
+-- Tablo kısıtlamaları `tour_codes`
+--
+ALTER TABLE `tour_codes`
+  ADD CONSTRAINT `fk_tour_dept` FOREIGN KEY (`department_id`) REFERENCES `departments` (`id`) ON DELETE SET NULL;
+
+--
 -- Tablo kısıtlamaları `transactions`
 --
 ALTER TABLE `transactions`
   ADD CONSTRAINT `fk_trans_dept` FOREIGN KEY (`department_id`) REFERENCES `departments` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_trans_tour` FOREIGN KEY (`tour_code_id`) REFERENCES `tour_codes` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `fk_transaction_channel` FOREIGN KEY (`payment_channel_id`) REFERENCES `payment_channels` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `transactions_ibfk_1` FOREIGN KEY (`customer_id`) REFERENCES `customers` (`id`) ON DELETE CASCADE;
 COMMIT;
 
