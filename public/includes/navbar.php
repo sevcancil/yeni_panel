@@ -8,13 +8,11 @@ if (session_status() === PHP_SESSION_NONE) session_start();
 $alert_count = 0;
 
 // alerts.php dosyasının tam yolunu bulalım
-// Bu dosya public/includes/ içinde olduğu için 2 seviye yukarı çıkıp app/functions'a iniyoruz.
 $alerts_file = __DIR__ . '/../../app/functions/alerts.php';
 
 if (file_exists($alerts_file)) {
     require_once $alerts_file;
     if (isset($pdo) && isset($_SESSION['user_id'])) {
-        // Fonksiyonun varlığını kontrol et (Hata vermesin)
         if (function_exists('get_user_alerts')) {
             $my_alerts = get_user_alerts($pdo, $_SESSION['user_id'], ($_SESSION['role'] === 'admin'));
             $alert_count = count($my_alerts);
@@ -128,6 +126,20 @@ if (file_exists($alerts_file)) {
     /* KIRMIZI LINKLER (ADMIN) */
     .nav-link.text-danger { color: #ff6b6b !important; }
     .nav-link.text-danger:hover { background-color: rgba(220, 53, 69, 0.2); color: #fff !important; }
+
+    /* MODAL STİLLERİ */
+    .hover-scale { transition: transform 0.2s ease, box-shadow 0.2s ease; cursor: pointer; }
+    .hover-scale:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0,0,0,0.15) !important; }
+    
+    .icon-circle {
+        width: 80px; height: 80px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+
+    .card-option-red:hover { border: 2px solid #dc3545 !important; }
+    .card-option-green:hover { border: 2px solid #198754 !important; }
 </style>
 
 <div class="sidebar-overlay" id="sidebarOverlay"></div>
@@ -181,8 +193,6 @@ if (file_exists($alerts_file)) {
                 </a>
             </li>
 
-
-
             <li>
                 <a href="projects.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'projects.php' ? 'active' : ''; ?>" title="Tur Kodları">
                     <i class="fa fa-plane-departure"></i> <span>Tur Kodları</span>
@@ -201,9 +211,9 @@ if (file_exists($alerts_file)) {
                 </a>
             </li>
 
-            <li>
-                <a href="transaction-add.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'transaction-add.php' ? 'active' : ''; ?>" title="İşlem Ekle">
-                    <i class="fa fa-bolt"></i> <span>Hızlı İşlem</span>
+            <li class="nav-item">
+                <a href="#" class="btn btn-warning fw-bold shadow-sm ms-2 w-75 mt-2" data-bs-toggle="modal" data-bs-target="#quickActionSelectionModal">
+                    <i class="fa fa-bolt"></i> Hızlı İşlem
                 </a>
             </li>
 
@@ -297,6 +307,56 @@ if (file_exists($alerts_file)) {
         <span class="text-muted small me-2 d-none d-md-block">Bugün: <?php echo date('d.m.Y'); ?></span>
     </div>
 </nav>
+
+<div class="modal fade" id="quickActionSelectionModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-dark text-white border-0">
+                <h5 class="modal-title fw-bold"><i class="fa fa-question-circle"></i> Ne Yapmak İstiyorsunuz?</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Kapat"></button>
+            </div>
+            <div class="modal-body p-5 bg-light">
+                
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <a href="transaction-add.php?doc_type=payment_order" class="text-decoration-none">
+                            <div class="card h-100 border-0 shadow-sm hover-scale card-option-red">
+                                <div class="card-body text-center p-4">
+                                    <div class="icon-circle bg-danger text-white mb-3 mx-auto">
+                                        <i class="fa fa-arrow-up fa-3x"></i>
+                                    </div>
+                                    <h4 class="text-danger fw-bold">Ödeme Yapacağım</h4>
+                                    <p class="text-muted small mb-0">
+                                        Tedarikçiye, personele veya bir yere para göndereceğim.
+                                        <br><strong>(Kasa Çıkışı / Gider)</strong>
+                                    </p>
+                                </div>
+                            </div>
+                        </a>
+                    </div>
+
+                    <div class="col-md-6">
+                        <a href="transaction-add.php?doc_type=invoice_order" class="text-decoration-none">
+                            <div class="card h-100 border-0 shadow-sm hover-scale card-option-green">
+                                <div class="card-body text-center p-4">
+                                    <div class="icon-circle bg-success text-white mb-3 mx-auto">
+                                        <i class="fa fa-arrow-down fa-3x"></i>
+                                    </div>
+                                    <h4 class="text-success fw-bold">Ödeme Alacağım</h4>
+                                    <p class="text-muted small mb-0">
+                                        Müşteriden veya bir yerden para tahsil edeceğim.
+                                        <br><strong>(Kasa Girişi / Gelir)</strong>
+                                    </p>
+                                </div>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script>

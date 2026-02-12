@@ -233,7 +233,12 @@ try {
 
         // Linkler
         $cari_link = !empty($row['company_name']) ? '<a href="customer-details.php?id='.$row['cust_id'].'" class="text-decoration-none fw-bold text-dark" target="_blank">'.guvenli_html($row['company_name']).'</a>' : '-';
-        $tour_link = !empty($row['tour_code']) ? '<a href="projects.php?id='.$row['tour_id'].'" class="badge bg-info text-dark text-decoration-none" target="_blank">'.$row['tour_code'].'</a>' : '-';
+        $tour_link = '-';
+            if (!empty($row['tour_code'])) {
+                // projects.php değil, doğrudan JS fonksiyonunu çağırıyoruz.
+                // openProjectReport fonksiyonunu payment-orders.php içinde tanımlayacağız.
+                $tour_link = '<span class="badge bg-info text-dark cursor-pointer" onclick="openProjectReport('.$row['tour_id'].')" title="Proje Raporunu Gör" style="cursor:pointer;">'.$row['tour_code'].'</span>';
+            }
 
         // --- TARİH GÖSTERİMİ (KRİTİK NOKTA) ---
         // Artık veritabanından gelen 'final_date' alias'ını kullanıyoruz.

@@ -14,17 +14,14 @@ $customer = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$customer) die("Cari bulunamadı.");
 
 // HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ ÇEK
-$sql = "SELECT t.*, 
-               p.type as parent_type, 
-               p.payment_status as parent_payment_status,
-               tc.code as tour_code 
+// HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ ÇEK
+// HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ ÇEK (GARANTİ DÜZELTİLMİŞ KOD)
+$sql = "SELECT t.*, p.type AS parent_type, p.payment_status AS parent_payment_status, tc.code AS tour_code 
         FROM transactions t 
         LEFT JOIN transactions p ON t.parent_id = p.id 
         LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id 
         WHERE t.customer_id = ? 
-        ORDER BY 
-            (CASE WHEN t.parent_id > 0 THEN t.parent_id ELSE t.id END) ASC, 
-            t.id ASC";
+        ORDER BY (CASE WHEN t.parent_id > 0 THEN t.parent_id ELSE t.id END) ASC, t.id ASC";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute([$id]);
@@ -135,9 +132,12 @@ $risk_style = getBalanceStyle($total_risk);
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title><?php echo guvenli_html($customer['company_name']); ?> - Detay</title>
+    <title><?php echo guvenli_html($customer['company_name']); ?> - Ekstre</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://cdn.sheetjs.com/xlsx-0.19.3/package/dist/xlsx.full.min.js"></script>
+
     <style>
         .card-left-primary { border-left: 5px solid #0d6efd; }
         .card-left-warning { border-left: 5px solid #ffc107; }
@@ -180,7 +180,9 @@ $risk_style = getBalanceStyle($total_risk);
             </div>
             <div class="d-flex gap-2">
                 <a href="customers.php" class="btn btn-secondary"><i class="fa fa-arrow-left"></i> Listeye Dön</a>
+                <a href="transaction-add.php?customer_id=<?php echo $customer['id']; ?>" class="btn btn-primary shadow-sm"><i class="fa fa-plus-circle"></i> Yeni İşlem</a>
                 <button onclick="window.print()" class="btn btn-outline-dark"><i class="fa fa-print"></i> Yazdır</button>
+                <button onclick="exportCustomerExcel()" class="btn btn-success"><i class="fa fa-file-excel"></i> Excel</button>
             </div>
         </div>
 
@@ -322,5 +324,64 @@ $risk_style = getBalanceStyle($total_risk);
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        function exportCustomerExcel() {
+            // PHP değişkenlerini JS'e güvenli aktarım (JSON ENCODE ÖNEMLİ)
+            var companyName = <?php echo json_encode($customer['company_name']); ?>;
+            var officialBal = <?php echo json_encode((float)$official_balance); ?>;
+            var pendingDebt = <?php echo json_encode((float)$pending_debt); ?>;
+            var pendingCredit = <?php echo json_encode((float)$pending_credit); ?>;
+            var totalRisk = <?php echo json_encode((float)$total_risk); ?>;
+
+            if (typeof XLSX === 'undefined') {
+                alert('Excel kütüphanesi yüklenemedi. Lütfen sayfayı yenileyin.');
+                return;
+            }
+
+            // Özet Tablo Verisi
+            var summaryData = [
+                ["FİRMA", companyName],
+                ["TARİH", new Date().toLocaleDateString('tr-TR')],
+                [],
+                ["--- ÖZET BİLGİLER ---"],
+                ["Resmi Bakiye", officialBal],
+                ["Fatura Bekleyen (Alacak)", pendingCredit],
+                ["Fatura Bekleyen (Borç)", pendingDebt],
+                ["GENEL TOPLAM (RİSK)", totalRisk],
+                [],
+                ["--- HESAP HAREKETLERİ ---"],
+                [] // Boşluk
+            ];
+
+            var table = document.getElementById("statementTable");
+            var wb = XLSX.utils.book_new();
+            
+            // 1. Özet veriyi sayfaya dök
+            var ws = XLSX.utils.aoa_to_sheet(summaryData);
+            
+            // 2. HTML Tablosunu özetin altına ekle (A12 hücresinden başla)
+            XLSX.utils.sheet_add_dom(ws, table, {origin: "A12"});
+
+            // Kolon Genişlikleri
+            ws['!cols'] = [
+                {wch: 10}, // ID
+                {wch: 12}, // Tarih
+                {wch: 15}, // Tur
+                {wch: 20}, // Tür
+                {wch: 40}, // Açıklama
+                {wch: 15}, // Tutar
+                {wch: 15}, // Ödendi
+                {wch: 15}, // Fatura
+                {wch: 15}  // Bakiye
+            ];
+
+            XLSX.utils.book_append_sheet(wb, ws, "Ekstre");
+            
+            // Dosya adı temizliği
+            var safeName = companyName.replace(/[^a-zA-Z0-9üğişçöÜĞİŞÇÖ ]/g, "").substring(0, 30);
+            XLSX.writeFile(wb, safeName + "_Ekstre.xlsx");
+        }
+    </script>
 </body>
 </html>

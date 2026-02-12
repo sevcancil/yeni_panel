@@ -15,9 +15,7 @@ $project = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$project) exit('<div class="alert alert-danger">Proje bulunamadı.</div>');
 
-// 2. Finansal Özet (Gelir / Gider / Kâr)
-// type='credit' -> Gelir (Tahsilat)
-// type='debt' -> Gider (Ödeme)
+// 2. Finansal Özet
 $stats = $pdo->prepare("
     SELECT 
         SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END) as total_income,
@@ -55,7 +53,7 @@ $transactions = $trans->fetchAll(PDO::FETCH_ASSOC);
             <button onclick="window.print()" class="btn btn-sm btn-outline-secondary me-1">
                 <i class="fa fa-print"></i> Yazdır
             </button>
-            <button onclick="exportTableToExcel('reportTable', '<?php echo $project['code']; ?>_Rapor')" class="btn btn-sm btn-success">
+            <button onclick="exportReportToExcel()" class="btn btn-sm btn-success">
                 <i class="fa fa-file-excel"></i> Excel
             </button>
         </div>
@@ -108,18 +106,47 @@ $transactions = $trans->fetchAll(PDO::FETCH_ASSOC);
                         <td><?php echo guvenli_html($t['company_name']); ?></td>
                         <td><?php echo guvenli_html($t['description']); ?></td>
                         <td><?php echo $t['invoice_no']; ?></td>
-                        <td class="text-end text-success fw-bold">
-                            <?php echo ($t['type'] == 'credit') ? number_format($t['amount'], 2, ',', '.') : ''; ?>
-                        </td>
-                        <td class="text-end text-danger fw-bold">
-                            <?php echo ($t['type'] == 'debt') ? number_format($t['amount'], 2, ',', '.') : ''; ?>
-                        </td>
+                        
+                        <?php if ($t['type'] == 'credit'): ?>
+                            <td class="text-end text-success fw-bold" 
+                                data-t="n" 
+                                data-v="<?php echo $t['amount']; ?>" 
+                                data-z="#,##0.00 ₺">
+                                <?php echo number_format($t['amount'], 2, ',', '.'); ?>
+                            </td>
+                        <?php else: ?>
+                            <td class="text-end"></td>
+                        <?php endif; ?>
+
+                        <?php if ($t['type'] == 'debt'): ?>
+                            <td class="text-end text-danger fw-bold" 
+                                data-t="n" 
+                                data-v="<?php echo $t['amount']; ?>" 
+                                data-z="#,##0.00 ₺">
+                                <?php echo number_format($t['amount'], 2, ',', '.'); ?>
+                            </td>
+                        <?php else: ?>
+                            <td class="text-end"></td>
+                        <?php endif; ?>
                     </tr>
                 <?php endforeach; ?>
+                
                 <tr class="fw-bold bg-light">
                     <td colspan="4" class="text-end">GENEL TOPLAM:</td>
-                    <td class="text-end text-success"><?php echo number_format($income, 2, ',', '.'); ?></td>
-                    <td class="text-end text-danger"><?php echo number_format($expense, 2, ',', '.'); ?></td>
+                    
+                    <td class="text-end text-success" 
+                        data-t="n" 
+                        data-v="<?php echo $income; ?>" 
+                        data-z="#,##0.00 ₺">
+                        <?php echo number_format($income, 2, ',', '.'); ?>
+                    </td>
+                    
+                    <td class="text-end text-danger" 
+                        data-t="n" 
+                        data-v="<?php echo $expense; ?>" 
+                        data-z="#,##0.00 ₺">
+                        <?php echo number_format($expense, 2, ',', '.'); ?>
+                    </td>
                 </tr>
             </tbody>
         </table>
@@ -127,7 +154,7 @@ $transactions = $trans->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <script>
-    // Önceki grafik varsa yok et (Tekrar açılınca üst üste binmesin)
+    // Grafik oluşturma kodu
     if(window.myChart instanceof Chart) { window.myChart.destroy(); }
 
     var ctx = document.getElementById('projectChart').getContext('2d');
@@ -149,4 +176,22 @@ $transactions = $trans->fetchAll(PDO::FETCH_ASSOC);
             }
         }
     });
+
+    // EXCEL EXPORT (Bu fonksiyon projects.php veya payment-orders.php içinde olmasa bile buradan çalışması için)
+    // Eğer ana sayfada tanımlıysa onu kullanır, değilse buradaki çalışır.
+    if (typeof window.exportReportToExcel === 'undefined') {
+        window.exportReportToExcel = function() {
+            var table = document.getElementById("reportTable");
+            if (!table) { alert("Tablo bulunamadı!"); return; }
+            
+            // SheetJS kontrolü
+            if (typeof XLSX === 'undefined') {
+                alert("Excel kütüphanesi yüklenemedi. Lütfen sayfayı yenileyin.");
+                return;
+            }
+
+            var wb = XLSX.utils.table_to_book(table, {sheet: "Rapor"});
+            XLSX.writeFile(wb, "<?php echo $project['code']; ?>_Rapor.xlsx");
+        };
+    }
 </script>

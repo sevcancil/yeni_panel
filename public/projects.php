@@ -1,6 +1,6 @@
 <?php
 // public/projects.php
-
+// ... (PHP kodları aynı kalacak, sadece HTML kısmında değişiklik var) ...
 session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
@@ -9,18 +9,16 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
 $message = '';
 
-// --- İŞLEM 1: SİLME ---
+// --- İŞLEMLER (SİLME, EKLEME, GÜNCELLEME) AYNI KALIYOR ---
+// ... (PHP kodlarını buraya olduğu gibi yapıştırabilirsin, değişmedi) ...
 if (isset($_GET['delete_id'])) {
     if(has_permission('delete_data')) {
         $del_id = (int)$_GET['delete_id'];
-        
         $stmt = $pdo->prepare("SELECT name, code FROM tour_codes WHERE id = ?");
         $stmt->execute([$del_id]);
         $del_rec = $stmt->fetch();
-
         $check = $pdo->prepare("SELECT COUNT(*) FROM transactions WHERE tour_code_id = ?");
         $check->execute([$del_id]);
-        
         if ($check->fetchColumn() > 0) {
             $message = '<div class="alert alert-danger">Bu projeye ait finansal hareketler var! Silemezsiniz.</div>';
         } else {
@@ -35,28 +33,18 @@ if (isset($_GET['delete_id'])) {
     }
 }
 
-// --- İŞLEM 2: EKLEME VE GÜNCELLEME ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $code = temizle($_POST['code']);
     $name = temizle($_POST['name']);
     $employer = temizle($_POST['employer']);
     $start_date = $_POST['start_date'];
-    
-    // YENİ: Departman ID'sini al
     $department_id = !empty($_POST['department_id']) ? $_POST['department_id'] : null;
-    
     $is_edit = isset($_POST['edit_id']) && !empty($_POST['edit_id']);
     $edit_id = $is_edit ? (int)$_POST['edit_id'] : 0;
 
-    // Kod tekrarı kontrolü
     $sql_check = "SELECT id FROM tour_codes WHERE code = ?";
     $params_check = [$code];
-    
-    if ($is_edit) {
-        $sql_check .= " AND id != ?";
-        $params_check[] = $edit_id;
-    }
-    
+    if ($is_edit) { $sql_check .= " AND id != ?"; $params_check[] = $edit_id; }
     $check = $pdo->prepare($sql_check);
     $check->execute($params_check);
 
@@ -64,17 +52,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = '<div class="alert alert-danger">Bu Tur Kodu zaten kullanılıyor!</div>';
     } else {
         if ($is_edit) {
-            // GÜNCELLEME: department_id eklendi
             $stmt = $pdo->prepare("UPDATE tour_codes SET code = ?, name = ?, employer = ?, start_date = ?, department_id = ? WHERE id = ?");
             $stmt->execute([$code, $name, $employer, $start_date, $department_id, $edit_id]);
-            
             log_action($pdo, 'project', $edit_id, 'update', "$code - $name projesi güncellendi.");
             $message = '<div class="alert alert-success">Proje güncellendi!</div>';
         } else {
-            // EKLEME: department_id eklendi
             $stmt = $pdo->prepare("INSERT INTO tour_codes (code, name, employer, start_date, department_id) VALUES (?, ?, ?, ?, ?)");
             $stmt->execute([$code, $name, $employer, $start_date, $department_id]);
-            
             log_action($pdo, 'project', $pdo->lastInsertId(), 'create', "$code - $name yeni projesi oluşturuldu.");
             $message = '<div class="alert alert-success">Yeni proje oluşturuldu!</div>';
         }
@@ -82,8 +66,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $departments = $pdo->query("SELECT * FROM departments ORDER BY name ASC")->fetchAll();
-
-// Listeleme Sorgusu: Departman adını da çekmek için LEFT JOIN ekledik
 $sql = "SELECT t.*, d.name as department_name,
         (SELECT SUM(amount) FROM transactions WHERE tour_code_id = t.id AND type = 'credit') as total_income,
         (SELECT SUM(amount) FROM transactions WHERE tour_code_id = t.id AND type = 'debt') as total_expense
@@ -99,6 +81,8 @@ $projects = $pdo->query($sql)->fetchAll();
     <title>Projeler / Tur Kodları</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://cdn.sheetjs.com/xlsx-0.19.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <style>
@@ -147,7 +131,6 @@ $projects = $pdo->query($sql)->fetchAll();
                         $income = $p['total_income'] ?? 0;
                         $expense = $p['total_expense'] ?? 0;
                         $profit = $income - $expense; 
-                        
                         $badge_class = ($profit >= 0) ? 'bg-success' : 'bg-danger';
                     ?>
                     <tr>
@@ -163,18 +146,14 @@ $projects = $pdo->query($sql)->fetchAll();
                                 <span class="text-muted small">-</span>
                             <?php endif; ?>
                         </td>
-                        
                         <td><strong><?php echo guvenli_html($p['name']); ?></strong></td>
                         <td><?php echo guvenli_html($p['employer']); ?></td>
                         <td><?php echo date('d.m.Y', strtotime($p['start_date'])); ?></td>
-                        
                         <td class="text-end text-success"><?php echo number_format($income, 2, ',', '.'); ?> ₺</td>
                         <td class="text-end text-danger"><?php echo number_format($expense, 2, ',', '.'); ?> ₺</td>
-                        
                         <td class="text-end fw-bold <?php echo $profit >= 0 ? 'text-success' : 'text-danger'; ?>">
                             <?php echo number_format($profit, 2, ',', '.'); ?> ₺
                         </td>
-                        
                         <td class="text-center">
                             <?php if($p['status'] == 'active'): ?>
                                 <span class="badge bg-info text-dark">Aktif</span>
@@ -216,11 +195,9 @@ $projects = $pdo->query($sql)->fetchAll();
                     </div>
                     <div class="modal-body">
                         <input type="hidden" name="edit_id" id="edit_id">
-                        
                         <div class="alert alert-info small">
                             <i class="fa fa-info-circle"></i> Tur kodu formatı: <b>Etkinlik Tarihi - Org.Temsilcisi - İş Adı - Bölüm</b>
                         </div>
-
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Bölüm</label>
@@ -252,17 +229,13 @@ $projects = $pdo->query($sql)->fetchAll();
     </div>
 
     <div class="modal fade" id="reportModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
+        <div class="modal-dialog modal-xl"> <div class="modal-content">
                 <div class="modal-header bg-dark text-white">
                     <h5 class="modal-title"><i class="fa fa-chart-line me-2"></i> Proje Finansal Raporu</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body" id="reportContent">
+                <div class="modal-body p-0" id="reportContent">
                     <div class="text-center p-5"><div class="spinner-border text-primary"></div><p>Rapor Hazırlanıyor...</p></div>
-                </div>
-                <div class="modal-footer no-print">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Kapat</button>
                 </div>
             </div>
         </div>
@@ -280,9 +253,24 @@ $projects = $pdo->query($sql)->fetchAll();
                 .then(res => res.text())
                 .then(data => {
                     document.getElementById('reportContent').innerHTML = data;
+                    // Chart scriptlerini çalıştır
                     var scripts = document.getElementById('reportContent').getElementsByTagName("script");
                     for(var i=0; i<scripts.length; i++) { eval(scripts[i].innerText); }
                 });
+        }
+
+        // --- YENİ EXCEL EXPORT FONKSİYONU ---
+        function exportToExcel() {
+            // Rapor tablosunu bul
+            var table = document.getElementById("reportTable"); // get-project-report.php içinde tablonun ID'si 'reportTable' olmalı
+            if (!table) {
+                alert("Rapor tablosu bulunamadı. Lütfen raporun yüklendiğinden emin olun.");
+                return;
+            }
+            
+            // SheetJS ile Excel oluştur
+            var wb = XLSX.utils.table_to_book(table, {sheet: "Rapor"});
+            XLSX.writeFile(wb, "Proje_Raporu.xlsx");
         }
 
         function openModal(mode, data = null) {
@@ -294,11 +282,7 @@ $projects = $pdo->query($sql)->fetchAll();
                 document.getElementById('employerInput').value = data.employer; 
                 document.getElementById('codeInput').value = data.code;
                 document.getElementById('dateInput').value = data.start_date;
-                
-                // Bölüm Seçimi (Eğer varsa)
-                if(data.department_id) {
-                    document.getElementById('deptSelect').value = data.department_id;
-                }
+                if(data.department_id) document.getElementById('deptSelect').value = data.department_id;
             } else {
                 document.getElementById('modalTitle').innerText = "Yeni İş / Tur Tanımla";
                 document.getElementById('edit_id').value = "";
@@ -308,8 +292,9 @@ $projects = $pdo->query($sql)->fetchAll();
             projectModal.show();
         }
 
-        // generateCode() fonksiyonu aynen kalıyor
+        // generateCode() fonksiyonu aynen kalsın...
         function generateCode() {
+            // ... (Mevcut kodlar) ...
             let dateVal = document.getElementById('dateInput').value; 
             let datePart = "000000";
             if(dateVal) {

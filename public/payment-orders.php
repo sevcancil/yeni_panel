@@ -36,7 +36,7 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
             <h2 class="mb-0 text-dark fw-bold"><i class="fa fa-list-ul text-secondary"></i> Finansal Operasyonlar</h2>
             <div class="d-flex gap-2">
                 <a href="payment-approval.php" class="btn btn-outline-dark"><i class="fa fa-check-double"></i> Ödeme Onayı</a>
-                <a href="transaction-add.php" class="btn btn-success shadow-sm"><i class="fa fa-plus"></i> Yeni Talep</a>
+                <a href="transaction-add.php" class="btn btn-success shadow-sm"><i class="fa fa-plus"></i>Ödeme / Fatura Emri Gir</a>
             </div>
         </div>
 
@@ -258,6 +258,40 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
         window.openEditModal = function(id) { new bootstrap.Modal(document.getElementById('editModal')).show(); $('#editModalBody').load('transaction-edit.php?id=' + id); };
         window.openLogModal = function(id) { new bootstrap.Modal(document.getElementById('logModal')).show(); $('#logModalBody').load('get-log-history.php?id=' + id); };
+    </script>
+    <div class="modal fade" id="projectReportModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title"><i class="fa fa-chart-line me-2"></i> Proje Finansal Raporu</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-0" id="projectReportContent">
+                    <div class="text-center p-5"><div class="spinner-border text-primary"></div><p>Rapor Hazırlanıyor...</p></div>
+                </div>
+                <div class="modal-footer no-print">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Kapat</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        // Mevcut scriptlerin altına ekle
+        var projectReportModal = new bootstrap.Modal(document.getElementById('projectReportModal'));
+
+        function openProjectReport(id) {
+            projectReportModal.show();
+            // Rapor içeriğini çek
+            $.get('get-project-report.php?id=' + id, function(data) {
+                $('#projectReportContent').html(data);
+                // Gelen HTML içindeki scriptleri çalıştır (Grafikler için)
+                var scripts = document.getElementById('projectReportContent').getElementsByTagName("script");
+                for(var i=0; i<scripts.length; i++) { eval(scripts[i].innerText); }
+            });
+        }
     </script>
 </body>
 </html>

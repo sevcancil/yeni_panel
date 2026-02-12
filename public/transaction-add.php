@@ -11,7 +11,7 @@ $user_id = $_SESSION['user_id'];
 $departments = $pdo->query("SELECT * FROM departments ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $tours = $pdo->query("SELECT * FROM tour_codes WHERE status = 'active' ORDER BY code DESC")->fetchAll(PDO::FETCH_ASSOC);
 
-// --- GET İLE GELEN (KUR FARKI VS.) VERİLERİ HAZIRLA ---
+// --- GET İLE GELEN VERİLER ---
 $pre_doc_type = $_GET['doc_type'] ?? 'payment_order';
 $pre_amount   = $_GET['amount'] ?? '';
 $pre_desc     = $_GET['desc'] ?? '';
@@ -25,9 +25,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $doc_type = $_POST['doc_type']; 
         $date = $_POST['date'];
-        $customer_id = !empty($_POST['customer_id']) ? $_POST['customer_id'] : null;
         
+        // Cari ID Kontrolü
+        $customer_id = !empty($_POST['customer_id']) ? $_POST['customer_id'] : null;
         if (!$customer_id) throw new Exception("Lütfen bir Cari Hesap seçiniz.");
+
+        // --- HATAYI ÇÖZEN KISIM (BOŞSA NULL YAP) ---
+        $tour_code_id = !empty($_POST['tour_code_id']) ? $_POST['tour_code_id'] : null;
+        $department_id = !empty($_POST['department_id']) ? $_POST['department_id'] : null;
+        $bank_id_val = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
+        // ------------------------------------------
 
         $amount = (float)$_POST['amount'];
         $currency = $_POST['currency'];
@@ -46,12 +53,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $simple_source = temizle($_POST['payment_source_simple']);
             
             if ($simple_source == 'Havale/EFT') {
-                // Banka seçimi zorunlu değil ama varsa alalım
-                $recipient_bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
+                $recipient_bank_id = $bank_id_val; // Yukarıda düzelttiğimiz değişkeni kullanıyoruz
                 $description .= " [Yöntem: Havale/EFT]";
             } 
             elseif ($simple_source == 'Yurtdışı Banka') {
-                // SWIFT Bilgilerini Açıklamaya Ekle
                 $swift_code = !empty($_POST['swift_code']) ? temizle($_POST['swift_code']) : '-';
                 $foreign_bank = !empty($_POST['foreign_bank_name']) ? temizle($_POST['foreign_bank_name']) : '-';
                 $description .= " [Transfer: Yurtdışı - Banka: $foreign_bank - SWIFT: $swift_code]";
@@ -64,14 +69,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // FATURA DURUMU
-        $invoice_status = 'pending'; // Varsayılan: Planlandı
+// FATURA VE VADE DURUMU
+        $invoice_status = 'pending'; 
         $invoice_date = null;
+        $due_date = null; 
 
-        // Sadece GELİR (Tahsilat) ise ve Fatura Kesilsin işaretliyse
         if ($doc_type === 'invoice_order' && isset($_POST['issue_invoice_check'])) {
-            $invoice_status = 'to_be_issued'; // Fatura Kesilecek
+            $invoice_status = 'to_be_issued';
             $invoice_date = !empty($_POST['invoice_issue_date']) ? $_POST['invoice_issue_date'] : $date;
+            
+            // Vade Tarihi Kontrolü (Boşsa NULL olsun)
+            $due_date = !empty($_POST['due_date']) ? $_POST['due_date'] : null;
+            
+            if(empty($description)) throw new Exception("Fatura kesilecek işlemler için Açıklama girmek zorunludur.");
+            if(empty($due_date)) throw new Exception("Fatura kesilecek işlemler için Vade Tarihi seçilmesi zorunludur.");
+
+            if (isset($_POST['vat_status'])) {
+                $vat_msg = ($_POST['vat_status'] === 'included') ? 'KDV DAHİL' : 'KDV HARİÇ';
+                $description .= " [Fatura: $vat_msg]";
+            }
         }
 
         $type = ($doc_type === 'payment_order') ? 'debt' : 'credit';
@@ -80,18 +96,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     customer_id, department_id, tour_code_id, type, doc_type, 
                     amount, currency, original_amount, exchange_rate, 
                     date, description, payment_status, invoice_status, 
-                    invoice_date, recipient_bank_id, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?)";
+                    invoice_date, due_date, recipient_bank_id, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?, ?)";
         
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
-            $customer_id, $_POST['department_id'] ?? null, $_POST['tour_code_id'] ?? null, $type, $doc_type,
+            $customer_id, 
+            $department_id, // Düzeltilmiş değişken (NULL veya ID)
+            $tour_code_id,  // Düzeltilmiş değişken (NULL veya ID)
+            $type, $doc_type,
             $amount, $currency, $original_amount, $exchange_rate,
             $date, $description, $invoice_status, 
-            $invoice_date, $recipient_bank_id, $user_id
+            $invoice_date, $due_date, $recipient_bank_id, $user_id
         ]);
 
-        // Loglama ve Yönlendirme
         $last_id = $pdo->lastInsertId();
         log_action($pdo, 'transaction', $last_id, 'create', "Yeni işlem oluşturuldu. Tutar: $amount TL");
         
@@ -268,7 +286,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 
                                 <div id="invoice_date_div" class="d-none mt-2">
                                     <label class="form-label small fw-bold">Fatura Tarihi</label>
-                                    <input type="date" name="invoice_issue_date" class="form-control form-control-sm border-warning" value="<?php echo date('Y-m-d'); ?>">
+                                    <input type="date" name="invoice_issue_date" class="form-control form-control-sm border-warning mb-2" value="<?php echo date('Y-m-d'); ?>">
+                                    
+                                    <label class="form-label small fw-bold">Vade Tarihi</label>
+                                    <input type="date" name="due_date" id="due_date" class="form-control form-control-sm border-warning mb-2" value="<?php echo date('Y-m-d'); ?>">
+
+                                    <div class="border-top pt-2">
+                                        <label class="form-label small fw-bold d-block text-dark">KDV Durumu <span class="text-danger">*</span></label>
+                                        <div class="d-flex gap-2">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="radio" name="vat_status" id="vat_inc" value="included">
+                                                <label class="form-check-label small" for="vat_inc">Dahil</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="radio" name="vat_status" id="vat_exc" value="excluded">
+                                                <label class="form-check-label small" for="vat_exc">Hariç (+)</label>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <hr class="my-2">
                                 <small class="text-muted">Seçilirse 'Fatura Kesilecek' listesine düşer.</small>
@@ -277,8 +312,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
 
                     <div class="form-section">
-                        <label class="form-label">Açıklama</label>
-                        <textarea name="description" class="form-control" rows="4"><?php echo guvenli_html($pre_desc); ?></textarea>
+                        <label class="form-label" id="desc_label">Açıklama</label>
+                        <textarea name="description" id="description" class="form-control" rows="4"><?php echo guvenli_html($pre_desc); ?></textarea>
                     </div>
 
                     <div class="d-grid gap-2">
@@ -324,13 +359,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <script>
         $(document).ready(function() {
             $('.select2').select2({ theme: 'bootstrap-5', placeholder: "Seçiniz...", allowClear: true });
-            
-            // Müşterileri Doldur
             var customers = <?php echo json_encode($pdo->query("SELECT id, company_name FROM customers ORDER BY company_name")->fetchAll(PDO::FETCH_ASSOC)); ?>;
             var sel = $('#customer_id');
             $.each(customers, function(i, c) { sel.append(new Option(c.company_name, c.id)); });
 
-            // --- OTOMATİK DOLDURMA (KUR FARKI) ---
             var preCust = "<?php echo $pre_customer; ?>";
             var isAuto = "<?php echo $is_auto_fill ? '1' : ''; ?>";
 
@@ -357,38 +389,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 hint.innerHTML = '<i class="fa fa-arrow-circle-up"></i> KASA ÇIKIŞI (Ödeme)';
                 hint.className = 'form-text text-danger fw-bold mt-1';
                 payDiv.classList.remove('d-none');
-                collDiv.classList.add('d-none'); // Ödeme emrinde fatura kutusu GİZLİ
+                collDiv.classList.add('d-none'); 
+                document.getElementById('issue_invoice_check').checked = false;
+                toggleInvoiceDate();
                 togglePaymentSource();
             } else {
                 hint.innerHTML = '<i class="fa fa-arrow-circle-down"></i> KASA GİRİŞİ (Tahsilat)';
                 hint.className = 'form-text text-success fw-bold mt-1';
                 payDiv.classList.add('d-none');
-                collDiv.classList.remove('d-none'); // Gelirde AÇIK
+                collDiv.classList.remove('d-none'); 
             }
         }
 
+        // --- GÜNCELLENEN FONKSİYON: VADE TARİHİ VE KDV ZORUNLULUĞU ---
         function toggleInvoiceDate() {
             var chk = document.getElementById('issue_invoice_check');
             var div = document.getElementById('invoice_date_div');
-            if (chk.checked) div.classList.remove('d-none'); else div.classList.add('d-none');
+            var desc = document.getElementById('description'); 
+            var lbl = document.getElementById('desc_label');
+            var dueDate = document.getElementById('due_date');
+            var vatRadios = document.getElementsByName('vat_status');
+
+            if (chk.checked) {
+                div.classList.remove('d-none');
+                
+                // Zorunlu alanlar
+                desc.setAttribute('required', 'required'); 
+                dueDate.setAttribute('required', 'required'); // Vade Tarihi Zorunlu
+                
+                lbl.innerHTML = 'Açıklama <span class="text-danger">*</span> (Fatura Detayı)';
+                
+                for(var i=0; i<vatRadios.length; i++) vatRadios[i].required = true;
+
+            } else {
+                div.classList.add('d-none');
+                
+                // Zorunluluğu Kaldır
+                desc.removeAttribute('required'); 
+                dueDate.removeAttribute('required'); 
+                
+                lbl.innerHTML = 'Açıklama';
+                
+                for(var i=0; i<vatRadios.length; i++) {
+                    vatRadios[i].required = false;
+                    vatRadios[i].checked = false; 
+                }
+            }
         }
 
+        // ... (Diğer fonksiyonlar: togglePaymentSource, autoSelectDepartment, fetchCustomerDetails, updateRate, calcTL, openBankModal, saveBank - Aynı kalacak)
         function togglePaymentSource() {
             var src = document.getElementById('payment_source_simple').value;
             var bankDiv = document.getElementById('recipient_bank_div');
             var swiftDiv = document.getElementById('swift_div');
-
-            // Hepsini gizle
             bankDiv.classList.add('d-none');
             swiftDiv.classList.add('d-none');
-
-            if (src === 'Havale/EFT') {
-                bankDiv.classList.remove('d-none');
-            } else if (src === 'Yurtdışı Banka') {
-                swiftDiv.classList.remove('d-none');
-            }
+            if (src === 'Havale/EFT') { bankDiv.classList.remove('d-none'); } 
+            else if (src === 'Yurtdışı Banka') { swiftDiv.classList.remove('d-none'); }
         }
-
         function autoSelectDepartment() {
             var tid = $('#tour_code_id').val();
             if(tid) {
@@ -397,30 +455,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }, 'json');
             }
         }
-
         function fetchCustomerDetails() {
             var id = $('#customer_id').val(); 
             if(!id) { $('#customer-history-section').addClass('d-none'); return; }
             $('#modal_customer_id').val(id);
-            
             $.get('api-get-customer-details.php?id='+id, function(data){
                 var bs = $('#bank_id').empty().append('<option value="">Seçiniz...</option>');
-                if(data.banks) {
-                    $.each(data.banks, function(i,b){ bs.append('<option value="'+b.id+'">'+b.bank_name+' - '+b.iban+'</option>'); });
-                }
-                
+                if(data.banks) { $.each(data.banks, function(i,b){ bs.append('<option value="'+b.id+'">'+b.bank_name+' - '+b.iban+'</option>'); }); }
                 var offBal = parseFloat(data.official_balance);
                 var offText = offBal < 0 ? 'BORÇLUYUZ' : 'ALACAKLIYIZ';
                 if(Math.abs(offBal) < 0.01) offText = 'DENK';
                 var htmlOff = `<div class="balance-card bg-official shadow"><div class="d-flex justify-content-between align-items-center"><div><small class="text-white-50">Resmi Bakiye (Faturalı)</small><h4 class="mb-0 fw-bold">${offBal.toLocaleString('tr-TR', {minimumFractionDigits: 2})} ${data.currency}</h4><small>${offText}</small></div><i class="fa fa-file-invoice fa-2x opacity-50"></i></div></div>`;
                 $('#official-balance-container').html(htmlOff);
-
                 var penBal = parseFloat(data.pending_balance);
                 var penText = penBal < 0 ? 'Fatura Bekleyen (Gider)' : 'Fatura Kesilecek (Gelir)';
                 if(Math.abs(penBal) < 0.01) penText = '-';
                 var htmlPen = `<div class="balance-card bg-pending shadow"><div class="d-flex justify-content-between align-items-center"><div><small class="text-dark-50">Bekleyen (Faturasız)</small><h4 class="mb-0 fw-bold text-dark">${penBal.toLocaleString('tr-TR', {minimumFractionDigits: 2})} ${data.currency}</h4><small class="text-dark">${penText}</small></div><i class="fa fa-clock fa-2x text-dark opacity-50"></i></div></div>`;
                 $('#pending-balance-container').html(htmlPen);
-
                 var tbody = $('#history-table-body').empty();
                 if(data.history && data.history.length > 0) {
                     $.each(data.history, function(i, h) {
@@ -432,7 +483,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $('#customer-history-section').removeClass('d-none');
             }, 'json');
         }
-
         function updateRate() {
             var c = $('#currency').val();
             var r = $('#exchange_rate');

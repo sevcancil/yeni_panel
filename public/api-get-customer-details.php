@@ -24,12 +24,12 @@ try {
     $bank_list = $banks->fetchAll(PDO::FETCH_ASSOC);
 
     // 3. BAKİYE VE GEÇMİŞ HESAPLAMA
-    // Tüm işlemleri çek (Hesap doğru olsun diye hepsi lazım)
-    $sql = "SELECT t.*, tc.code as tour_code 
+    // Temizlenmiş SQL Sorgusu (Görünmez karakterlerden arındırılmış)
+    $sql = "SELECT t.*, tc.code AS tour_code 
             FROM transactions t 
             LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id 
             WHERE t.customer_id = ? 
-            ORDER BY t.date DESC, t.id DESC"; // En son işlemler en üstte
+            ORDER BY t.date DESC, t.id DESC";
     
     $stmt = $pdo->prepare($sql);
     $stmt->execute([$id]);
@@ -88,7 +88,7 @@ try {
                 'type' => $row['type'],
                 'type_label' => $type_label,
                 'description' => $row['description'],
-                'tour_code' => $row['tour_code'],
+                'tour_code' => $row['tour_code'] ?? '-', // PHP 7+ Null Coalescing Operator
                 'amount' => $amt,
                 'is_pending' => !$is_official
             ];
