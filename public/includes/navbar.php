@@ -174,12 +174,6 @@ if (file_exists($alerts_file)) {
                     <i class="fa fa-address-card"></i> <span>Cari Kartlar</span>
                 </a>
             </li>
-            
-            <li>
-                <a href="#" class="nav-link" title="Cari Kart Bakiye">
-                    <i class="fa fa-scale-balanced"></i> <span>Cari Kartlar Bakiye</span>
-                </a>
-            </li>
 
             <li>
                 <a href="company-cards.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'company-cards.php' ? 'active' : ''; ?>" title="Kart Listesi">
@@ -247,7 +241,7 @@ if (file_exists($alerts_file)) {
             </li>
                 
                 <li>
-                    <a href="#" class="nav-link text-danger" title="Raporlar">
+                    <a href="reports.php" class="nav-link text-danger" title="Raporlar">
                         <i class="fa fa-chart-line"></i> <span>Raporlar</span>
                     </a>
                 </li>
