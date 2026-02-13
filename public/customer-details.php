@@ -13,14 +13,12 @@ $stmt->execute([$id]);
 $customer = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$customer) die("Cari bulunamadı.");
 
-// HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ ÇEK
-// HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ ÇEK
-// HEM ANA İŞLEMLERİ HEM ALT İŞLEMLERİ ÇEK (GARANTİ DÜZELTİLMİŞ KOD)
+// --- GÜNCELLEME: SİLİNENLERİ HARİÇ TUT (AND t.is_deleted = 0 EKLENDİ) ---
 $sql = "SELECT t.*, p.type AS parent_type, p.payment_status AS parent_payment_status, tc.code AS tour_code 
         FROM transactions t 
         LEFT JOIN transactions p ON t.parent_id = p.id 
         LEFT JOIN tour_codes tc ON t.tour_code_id = tc.id 
-        WHERE t.customer_id = ? 
+        WHERE t.customer_id = ? AND t.is_deleted = 0
         ORDER BY (CASE WHEN t.parent_id > 0 THEN t.parent_id ELSE t.id END) ASC, t.id ASC";
 
 $stmt = $pdo->prepare($sql);
@@ -38,7 +36,9 @@ $running_balance = $customer['opening_balance'];
 foreach ($transactions as $row) {
     $amount = (float)$row['amount'];
     $type = $row['type'];
-    $is_deleted = isset($row['is_deleted']) && $row['is_deleted'] == 1;
+    
+    // SQL'de filtrelediğimiz için artık hepsi aktif kayıttır
+    $is_deleted = false; 
 
     // Sütun Değerleri (Her satır için sıfırlanır)
     $col_siparis = 0;   // Sütun 1: Sipariş (Etkisiz)
@@ -49,51 +49,46 @@ foreach ($transactions as $row) {
     $is_pending_row = false; 
     $is_child = ($row['parent_id'] > 0);
 
-    if ($is_deleted) {
-        $effect_on_balance = 0;
-    } else {
-        
-        // 1. ANA SİPARİŞLER
-        if ($type == 'debt') {
-            $col_siparis = $amount;
-            if ($row['invoice_status'] != 'issued') {
-                $pending_debt += $amount;
-                $is_pending_row = true;
-            }
+    // 1. ANA SİPARİŞLER
+    if ($type == 'debt') {
+        $col_siparis = $amount;
+        if ($row['invoice_status'] != 'issued') {
+            $pending_debt += $amount;
+            $is_pending_row = true;
+        }
+    } 
+    elseif ($type == 'credit') {
+        $col_siparis = $amount;
+        if ($row['invoice_status'] != 'issued') {
+            $pending_credit += $amount;
+            $is_pending_row = true;
+        }
+    }
+
+    // 2. FATURALAR
+    elseif ($type == 'invoice') {
+        if ($row['parent_type'] == 'debt') {
+            // GİDER FATURASI (+)
+            $col_fatura = $amount; 
+            $effect_on_balance = $amount; 
         } 
-        elseif ($type == 'credit') {
-            $col_siparis = $amount;
-            if ($row['invoice_status'] != 'issued') {
-                $pending_credit += $amount;
-                $is_pending_row = true;
-            }
-        }
-
-        // 2. FATURALAR
-        elseif ($type == 'invoice') {
-            if ($row['parent_type'] == 'debt') {
-                // GİDER FATURASI (+)
-                $col_fatura = $amount; 
-                $effect_on_balance = $amount; 
-            } 
-            elseif ($row['parent_type'] == 'credit') {
-                // GELİR FATURASI (-)
-                $col_fatura = -$amount; 
-                $effect_on_balance = -$amount;
-            }
-        }
-
-        // 3. PARA HAREKETLERİ
-        elseif ($type == 'payment_out') {
-            // ÖDEME ÇIKIŞI (-)
-            $col_para = -$amount; 
+        elseif ($row['parent_type'] == 'credit') {
+            // GELİR FATURASI (-)
+            $col_fatura = -$amount; 
             $effect_on_balance = -$amount;
-        } 
-        elseif ($type == 'payment_in') {
-            // TAHSİLAT GİRİŞİ (+)
-            $col_para = $amount; 
-            $effect_on_balance = $amount;
         }
+    }
+
+    // 3. PARA HAREKETLERİ
+    elseif ($type == 'payment_out') {
+        // ÖDEME ÇIKIŞI (-)
+        $col_para = -$amount; 
+        $effect_on_balance = -$amount;
+    } 
+    elseif ($type == 'payment_in') {
+        // TAHSİLAT GİRİŞİ (+)
+        $col_para = $amount; 
+        $effect_on_balance = $amount;
     }
 
     $official_balance += $effect_on_balance;
@@ -142,12 +137,11 @@ $risk_style = getBalanceStyle($total_risk);
         .card-left-primary { border-left: 5px solid #0d6efd; }
         .card-left-warning { border-left: 5px solid #ffc107; }
         .card-left-success { border-left: 5px solid #198754; }
-        /* .card-left-info kaldırıldı çünkü 4. kart yok */
         
         .row-parent { background-color: #e9ecef !important; color: #495057; font-weight: 600; border-top: 3px solid #dee2e6; }
         .row-child { background-color: #fff !important; }
+        /* Silinen satır CSS'ine artık ihtiyacımız yok ama kalabilir */
         .row-deleted { background-color: #ffe6e6 !important; color: #b02a37 !important; text-decoration: line-through; opacity: 0.7; }
-        .row-deleted .badge { opacity: 0.5; }
 
         .child-indent { padding-left: 40px !important; position: relative; }
         .child-icon { position: absolute; left: 15px; top: 15px; color: #adb5bd; }
@@ -232,7 +226,7 @@ $risk_style = getBalanceStyle($total_risk);
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
-                    <table class="table table-hover mb-0 align-middle" style="font-size: 0.9rem;">
+                    <table id="statementTable" class="table table-hover mb-0 align-middle" style="font-size: 0.9rem;">
                         <thead class="table-header-custom">
                             <tr>
                                 <th width="50">ID</th>
@@ -261,7 +255,7 @@ $risk_style = getBalanceStyle($total_risk);
 
                             <?php foreach ($processed_rows as $p): 
                                 $r = $p['data'];
-                                $row_class = $p['is_deleted'] ? 'row-deleted' : ($p['is_child'] ? 'row-child' : 'row-parent');
+                                $row_class = $p['is_child'] ? 'row-child' : 'row-parent';
                                 $id_display = $p['is_child'] ? '' : '<strong>#'.$r['id'].'</strong>';
                                 $tour_display = !empty($r['tour_code']) ? '<span class="badge bg-info text-dark">'.$r['tour_code'].'</span>' : '-';
 
@@ -271,8 +265,7 @@ $risk_style = getBalanceStyle($total_risk);
                                 elseif ($r['type']=='invoice') $badge = '<span class="badge bg-dark">FATURA</span>';
                                 elseif ($r['type']=='payment_out') $badge = '<span class="badge bg-primary">Ödeme</span>';
                                 elseif ($r['type']=='payment_in') $badge = '<span class="badge bg-success">Tahsilat</span>';
-                                if($p['is_deleted']) $badge .= ' <span class="badge bg-danger">İPTAL</span>';
-
+                                
                                 $desc_class = $p['is_child'] ? 'child-indent' : '';
                                 $indent_icon = $p['is_child'] ? '<i class="fa fa-level-up-alt fa-rotate-90 child-icon"></i>' : '';
                                 
@@ -327,7 +320,6 @@ $risk_style = getBalanceStyle($total_risk);
 
     <script>
         function exportCustomerExcel() {
-            // PHP değişkenlerini JS'e güvenli aktarım (JSON ENCODE ÖNEMLİ)
             var companyName = <?php echo json_encode($customer['company_name']); ?>;
             var officialBal = <?php echo json_encode((float)$official_balance); ?>;
             var pendingDebt = <?php echo json_encode((float)$pending_debt); ?>;
@@ -339,7 +331,6 @@ $risk_style = getBalanceStyle($total_risk);
                 return;
             }
 
-            // Özet Tablo Verisi
             var summaryData = [
                 ["FİRMA", companyName],
                 ["TARİH", new Date().toLocaleDateString('tr-TR')],
@@ -351,34 +342,30 @@ $risk_style = getBalanceStyle($total_risk);
                 ["GENEL TOPLAM (RİSK)", totalRisk],
                 [],
                 ["--- HESAP HAREKETLERİ ---"],
-                [] // Boşluk
+                []
             ];
 
             var table = document.getElementById("statementTable");
             var wb = XLSX.utils.book_new();
             
-            // 1. Özet veriyi sayfaya dök
             var ws = XLSX.utils.aoa_to_sheet(summaryData);
             
-            // 2. HTML Tablosunu özetin altına ekle (A12 hücresinden başla)
             XLSX.utils.sheet_add_dom(ws, table, {origin: "A12"});
 
-            // Kolon Genişlikleri
             ws['!cols'] = [
-                {wch: 10}, // ID
-                {wch: 12}, // Tarih
-                {wch: 15}, // Tur
-                {wch: 20}, // Tür
-                {wch: 40}, // Açıklama
-                {wch: 15}, // Tutar
-                {wch: 15}, // Ödendi
-                {wch: 15}, // Fatura
-                {wch: 15}  // Bakiye
+                {wch: 10}, 
+                {wch: 12}, 
+                {wch: 15}, 
+                {wch: 20}, 
+                {wch: 40}, 
+                {wch: 15}, 
+                {wch: 15}, 
+                {wch: 15}, 
+                {wch: 15} 
             ];
 
             XLSX.utils.book_append_sheet(wb, ws, "Ekstre");
             
-            // Dosya adı temizliği
             var safeName = companyName.replace(/[^a-zA-Z0-9üğişçöÜĞİŞÇÖ ]/g, "").substring(0, 30);
             XLSX.writeFile(wb, safeName + "_Ekstre.xlsx");
         }

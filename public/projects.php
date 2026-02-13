@@ -1,6 +1,5 @@
 <?php
 // public/projects.php
-// ... (PHP kodları aynı kalacak, sadece HTML kısmında değişiklik var) ...
 session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
@@ -9,8 +8,6 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
 $message = '';
 
-// --- İŞLEMLER (SİLME, EKLEME, GÜNCELLEME) AYNI KALIYOR ---
-// ... (PHP kodlarını buraya olduğu gibi yapıştırabilirsin, değişmedi) ...
 if (isset($_GET['delete_id'])) {
     if(has_permission('delete_data')) {
         $del_id = (int)$_GET['delete_id'];
@@ -57,8 +54,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             log_action($pdo, 'project', $edit_id, 'update', "$code - $name projesi güncellendi.");
             $message = '<div class="alert alert-success">Proje güncellendi!</div>';
         } else {
-            $stmt = $pdo->prepare("INSERT INTO tour_codes (code, name, employer, start_date, department_id) VALUES (?, ?, ?, ?, ?)");
-            $stmt->execute([$code, $name, $employer, $start_date, $department_id]);
+            // YENİ: created_by alanını ekledik
+            $creator_id = $_SESSION['user_id'];
+            $stmt = $pdo->prepare("INSERT INTO tour_codes (code, name, employer, start_date, department_id, created_by) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$code, $name, $employer, $start_date, $department_id, $creator_id]);
+            
             log_action($pdo, 'project', $pdo->lastInsertId(), 'create', "$code - $name yeni projesi oluşturuldu.");
             $message = '<div class="alert alert-success">Yeni proje oluşturuldu!</div>';
         }
@@ -66,13 +66,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $departments = $pdo->query("SELECT * FROM departments ORDER BY name ASC")->fetchAll();
-$sql = "SELECT t.*, d.name as department_name,
-        (SELECT SUM(amount) FROM transactions WHERE tour_code_id = t.id AND type = 'credit') as total_income,
-        (SELECT SUM(amount) FROM transactions WHERE tour_code_id = t.id AND type = 'debt') as total_expense
-        FROM tour_codes t 
-        LEFT JOIN departments d ON t.department_id = d.id
-        ORDER BY t.start_date DESC";
-$projects = $pdo->query($sql)->fetchAll();
+
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$filter_profit = isset($_GET['filter_profit']) ? $_GET['filter_profit'] : '';
+$sort_profit = isset($_GET['sort_profit']) ? $_GET['sort_profit'] : '';
+
+// YENİ: USERS tablosu ile JOIN yaptık (u.username) ve created_at'i çektik
+$base_query = "
+    SELECT t.*, d.name as department_name, u.username as creator_name,
+    COALESCE((SELECT SUM(amount) FROM transactions WHERE tour_code_id = t.id AND type = 'credit'), 0) as total_income,
+    COALESCE((SELECT SUM(amount) FROM transactions WHERE tour_code_id = t.id AND type = 'debt'), 0) as total_expense
+    FROM tour_codes t 
+    LEFT JOIN departments d ON t.department_id = d.id
+    LEFT JOIN users u ON t.created_by = u.id
+";
+
+$sql = "SELECT * FROM ($base_query) AS project_data WHERE 1=1";
+$params = [];
+
+if ($search !== '') {
+    $sql .= " AND (code LIKE ? OR name LIKE ? OR employer LIKE ?)";
+    $params[] = "%$search%";
+    $params[] = "%$search%";
+    $params[] = "%$search%";
+}
+
+if ($filter_profit === 'profit') {
+    $sql .= " AND (total_income - total_expense) >= 0";
+} elseif ($filter_profit === 'loss') {
+    $sql .= " AND (total_income - total_expense) < 0";
+}
+
+if ($sort_profit === 'desc') {
+    $sql .= " ORDER BY (total_income - total_expense) DESC";
+} elseif ($sort_profit === 'asc') {
+    $sql .= " ORDER BY (total_income - total_expense) ASC";
+} else {
+    $sql .= " ORDER BY start_date DESC";
+}
+
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$projects = $stmt->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="tr">
@@ -101,12 +136,47 @@ $projects = $pdo->query($sql)->fetchAll();
         
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h2>Tur Kodları / Projeler</h2>
-            <button type="button" class="btn btn-success" onclick="openModal('add')">
-                <i class="fa fa-magic"></i> Yeni İş Tanımla
-            </button>
+            <div>
+                <button type="button" class="btn btn-secondary me-2" onclick="exportBulkToExcel()">
+                    <i class="fa fa-file-excel"></i> Toplu Liste İndir
+                </button>
+                <button type="button" class="btn btn-success" onclick="openModal('add')">
+                    <i class="fa fa-magic"></i> Yeni İş Tanımla
+                </button>
+            </div>
         </div>
 
         <?php if(isset($_GET['msg']) && $_GET['msg']=='deleted') echo '<div class="alert alert-warning">Proje silindi.</div>'; echo $message; ?>
+
+        <div class="card shadow mb-4 bg-light">
+            <div class="card-body">
+                <form method="GET" action="projects.php">
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <input type="text" name="search" class="form-control" placeholder="Kod, İş Adı veya Temsilci Ara..." value="<?php echo htmlspecialchars($search); ?>">
+                        </div>
+                        <div class="col-md-3">
+                            <select name="filter_profit" class="form-select">
+                                <option value="">Tüm Kâr/Zarar Durumları</option>
+                                <option value="profit" <?php echo $filter_profit == 'profit' ? 'selected' : ''; ?>>Kârda Olanlar (>= 0)</option>
+                                <option value="loss" <?php echo $filter_profit == 'loss' ? 'selected' : ''; ?>>Zararda Olanlar (< 0)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select name="sort_profit" class="form-select">
+                                <option value="">Sıralama: Tarihe Göre (Varsayılan)</option>
+                                <option value="desc" <?php echo $sort_profit == 'desc' ? 'selected' : ''; ?>>Kâr/Zarar: Yüksekten Düşüğe</option>
+                                <option value="asc" <?php echo $sort_profit == 'asc' ? 'selected' : ''; ?>>Kâr/Zarar: Düşükten Yükseğe</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2 d-flex gap-2">
+                            <button type="submit" class="btn btn-primary w-100"><i class="fa fa-search"></i> Filtrele</button>
+                            <a href="projects.php" class="btn btn-outline-secondary w-100" title="Temizle"><i class="fa fa-times"></i></a>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
 
         <div class="card shadow">
             <div class="card-body p-0">
@@ -115,9 +185,11 @@ $projects = $pdo->query($sql)->fetchAll();
                         <thead class="table-light">
                             <tr>
                                 <th>Kod</th>
-                                <th>Bölüm</th> <th>Etkinlik / İş Adı</th>
+                                <th>Bölüm</th> 
+                                <th>Etkinlik / İş Adı</th>
                                 <th>Organizasyon Temsilcisi</th>
                                 <th>İşin Tarih</th>
+                                <th class="text-center">Oluşturan</th>
                                 <th class="text-end">Gelir</th>
                                 <th class="text-end">Gider</th>
                                 <th class="text-end">Kâr/Zarar</th>
@@ -126,12 +198,20 @@ $projects = $pdo->query($sql)->fetchAll();
                             </tr>
                         </thead>
                         <tbody>
+                <?php if(count($projects) == 0): ?>
+                    <tr><td colspan="11" class="text-center py-4 text-muted">Kriterlerinize uygun proje bulunamadı.</td></tr>
+                <?php endif; ?>
+                
                 <?php foreach($projects as $p): ?>
                     <?php 
                         $income = $p['total_income'] ?? 0;
                         $expense = $p['total_expense'] ?? 0;
                         $profit = $income - $expense; 
                         $badge_class = ($profit >= 0) ? 'bg-success' : 'bg-danger';
+                        
+                        // Oluşturan kişi kontrolü (Eski kayıtlarda null gelebilir)
+                        $creator = !empty($p['creator_name']) ? htmlspecialchars($p['creator_name']) : '<span class="text-muted small">-</span>';
+                        $create_date = !empty($p['created_at']) ? date('d.m.Y H:i', strtotime($p['created_at'])) : '';
                     ?>
                     <tr>
                         <td>
@@ -149,6 +229,14 @@ $projects = $pdo->query($sql)->fetchAll();
                         <td><strong><?php echo guvenli_html($p['name']); ?></strong></td>
                         <td><?php echo guvenli_html($p['employer']); ?></td>
                         <td><?php echo date('d.m.Y', strtotime($p['start_date'])); ?></td>
+                        
+                        <td class="text-center">
+                            <div class="fw-bold text-dark"><?php echo $creator; ?></div>
+                            <?php if($create_date): ?>
+                                <div class="text-muted small" style="font-size: 0.7rem;"><?php echo $create_date; ?></div>
+                            <?php endif; ?>
+                        </td>
+
                         <td class="text-end text-success"><?php echo number_format($income, 2, ',', '.'); ?> ₺</td>
                         <td class="text-end text-danger"><?php echo number_format($expense, 2, ',', '.'); ?> ₺</td>
                         <td class="text-end fw-bold <?php echo $profit >= 0 ? 'text-success' : 'text-danger'; ?>">
@@ -162,7 +250,7 @@ $projects = $pdo->query($sql)->fetchAll();
                             <?php endif; ?>
                         </td>
                         <td class="text-center">
-                            <button type="button" class="btn btn-sm btn-info text-white" onclick="openReport(<?php echo $p['id']; ?>)" title="Finansal Rapor">
+                            <button type="button" class="btn btn-sm btn-info text-white" onclick='openReport(<?php echo $p['id']; ?>, <?php echo json_encode($p['code']); ?>, <?php echo json_encode($p['name']); ?>)' title="Finansal Rapor">
                                 <i class="fa fa-chart-pie"></i>
                             </button>
                             
@@ -231,7 +319,7 @@ $projects = $pdo->query($sql)->fetchAll();
     <div class="modal fade" id="reportModal" tabindex="-1">
         <div class="modal-dialog modal-xl"> <div class="modal-content">
                 <div class="modal-header bg-dark text-white">
-                    <h5 class="modal-title"><i class="fa fa-chart-line me-2"></i> Proje Finansal Raporu</h5>
+                    <h5 class="modal-title" id="reportModalTitle"><i class="fa fa-chart-line me-2"></i> Proje Finansal Raporu</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-0" id="reportContent">
@@ -246,31 +334,67 @@ $projects = $pdo->query($sql)->fetchAll();
     <script>
         var projectModal = new bootstrap.Modal(document.getElementById('projectModal'));
         var reportModal = new bootstrap.Modal(document.getElementById('reportModal'));
+        
+        var currentProjectCode = "";
+        var currentProjectName = "";
 
-        function openReport(id) {
+        function openReport(id, code, name) {
+            currentProjectCode = code;
+            currentProjectName = name;
+            document.getElementById('reportModalTitle').innerHTML = '<i class="fa fa-chart-line me-2"></i> ' + code + ' - ' + name + ' Finansal Raporu';
+            document.getElementById('reportContent').innerHTML = '<div class="text-center p-5"><div class="spinner-border text-primary"></div><p>Rapor Hazırlanıyor...</p></div>';
             reportModal.show();
             fetch('get-project-report.php?id=' + id)
                 .then(res => res.text())
                 .then(data => {
                     document.getElementById('reportContent').innerHTML = data;
-                    // Chart scriptlerini çalıştır
                     var scripts = document.getElementById('reportContent').getElementsByTagName("script");
                     for(var i=0; i<scripts.length; i++) { eval(scripts[i].innerText); }
                 });
         }
 
-        // --- YENİ EXCEL EXPORT FONKSİYONU ---
         function exportToExcel() {
-            // Rapor tablosunu bul
-            var table = document.getElementById("reportTable"); // get-project-report.php içinde tablonun ID'si 'reportTable' olmalı
-            if (!table) {
-                alert("Rapor tablosu bulunamadı. Lütfen raporun yüklendiğinden emin olun.");
-                return;
-            }
-            
-            // SheetJS ile Excel oluştur
-            var wb = XLSX.utils.table_to_book(table, {sheet: "Rapor"});
-            XLSX.writeFile(wb, "Proje_Raporu.xlsx");
+            var table = document.getElementById("reportTable"); 
+            if (!table) { alert("Rapor tablosu bulunamadı."); return; }
+            var wb = XLSX.utils.table_to_book(table, {sheet: currentProjectCode.substring(0, 30)});
+            var cleanName = currentProjectName.replace(/[^a-zA-Z0-9]/g, '_');
+            var fileName = currentProjectCode + "_" + cleanName + "_raporu.xlsx";
+            XLSX.writeFile(wb, fileName);
+        }
+
+        var bulkProjectsData = [
+            ["Kod", "Bölüm", "Etkinlik / İş Adı", "Organizasyon Temsilcisi", "İşin Tarihi", "Oluşturan", "Kayıt Tarihi", "Gelir", "Gider", "Kâr/Zarar", "Durum"]
+        ];
+
+        <?php foreach($projects as $p): 
+            $inc = $p['total_income'] ?? 0;
+            $exp = $p['total_expense'] ?? 0;
+            $prof = $inc - $exp;
+            $stat = $p['status'] == 'active' ? 'Aktif' : 'Tamamlandı';
+            $cr = $p['creator_name'] ?? '-';
+            $cdate = $p['created_at'] ?? '';
+        ?>
+        bulkProjectsData.push([
+            "<?php echo guvenli_html($p['code']); ?>",
+            "<?php echo guvenli_html($p['department_name'] ?? '-'); ?>",
+            "<?php echo addslashes($p['name']); ?>",
+            "<?php echo addslashes($p['employer']); ?>",
+            "<?php echo date('d.m.Y', strtotime($p['start_date'])); ?>",
+            "<?php echo $cr; ?>",
+            "<?php echo $cdate; ?>",
+            <?php echo $inc; ?>,
+            <?php echo $exp; ?>,
+            <?php echo $prof; ?>,
+            "<?php echo $stat; ?>"
+        ]);
+        <?php endforeach; ?>
+
+        function exportBulkToExcel() {
+            if(bulkProjectsData.length <= 1) { alert("İndirilecek kayıt bulunamadı."); return; }
+            var ws = XLSX.utils.aoa_to_sheet(bulkProjectsData);
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Projeler");
+            XLSX.writeFile(wb, "Toplu_Tur_Raporu.xlsx");
         }
 
         function openModal(mode, data = null) {
@@ -292,9 +416,7 @@ $projects = $pdo->query($sql)->fetchAll();
             projectModal.show();
         }
 
-        // generateCode() fonksiyonu aynen kalsın...
         function generateCode() {
-            // ... (Mevcut kodlar) ...
             let dateVal = document.getElementById('dateInput').value; 
             let datePart = "000000";
             if(dateVal) {

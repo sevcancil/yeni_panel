@@ -77,6 +77,30 @@ function get_user_alerts($pdo, $user_id, $is_admin) {
         ];
     }
 
+    // =================================================================
+    // 3. SENARYO: EKSİK İK BİLGİLERİ (Sadece Admin/İK Görür)
+    // =================================================================
+    if ($is_admin || $_SESSION['role'] == 'ik') {
+        $sql3 = "SELECT u.id, u.full_name, ed.tc_no, ed.salary 
+                 FROM users u 
+                 LEFT JOIN employee_details ed ON u.id = ed.user_id 
+                 WHERE u.role != 'admin' AND (ed.tc_no IS NULL OR ed.tc_no = '' OR ed.salary IS NULL)";
+                 
+        $stmt3 = $pdo->query($sql3);
+        $rows3 = $stmt3->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($rows3 as $row) {
+            $alerts[] = [
+                'type' => 'info', // Mavi
+                'icon' => 'fa-user-clock',
+                'title' => 'Eksik Özlük Bilgisi',
+                'msg' => "<b>" . guvenli_html($row['full_name']) . "</b> personelinin TC veya Maaş bilgisi eksik.",
+                'link' => 'user-details.php?id=' . $row['id'], // Direkt profile git
+                'btn_text' => 'Tamamla'
+            ];
+        }
+    }
+
     return $alerts;
 }
 ?>
