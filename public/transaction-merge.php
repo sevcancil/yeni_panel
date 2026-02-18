@@ -126,6 +126,16 @@ $basket_display = implode(' + ', $basket_text);
                             <option value="USD">USD (Amerikan Doları)</option>
                             <option value="EUR">EUR (Euro)</option>
                             <option value="GBP">GBP (Sterlin)</option>
+                            <option value="AUD">AUD ($)</option>
+                            <option value="DKK">DKK (kr)</option>
+                            <option value="CHF">CHF</option>
+                            <option value="SEK">SEK (kr)</option>
+                            <option value="CAD">CAD ($)</option>
+                            <option value="KWD">KWD (KD)</option>
+                            <option value="NOK">NOK (kr)</option>
+                            <option value="SAR">SAR</option>
+                            <option value="JPY">JPY (¥)</option>
+                            <option value="AED">AED</option>
                         </select>
                     </div>
                     <div class="col-md-6">

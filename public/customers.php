@@ -34,7 +34,6 @@ if (isset($_GET['delete_id'])) {
         } else {
             $stmt = $pdo->prepare("DELETE FROM customers WHERE id = ?");
             $stmt->execute([$del_id]);
-            // Silen kişiyi loga ekle
             log_action($pdo, 'customer', $del_id, 'delete', "$del_name carisi silindi. (Silen: $current_user_name)");
             header("Location: customers.php?msg=deleted");
             exit;
@@ -47,26 +46,22 @@ if (isset($_GET['delete_id'])) {
 // --- İŞLEM 2: EKLEME VE GÜNCELLEME ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
-    // Verileri Al
     $type = $_POST['customer_type']; 
     $title = temizle($_POST['company_name']); 
     $code = temizle($_POST['customer_code']);
     $is_temporary = isset($_POST['is_temporary']) ? 1 : 0; 
     
-    // Kimlik Verileri
     $tc = !empty($_POST['tc_number']) ? temizle($_POST['tc_number']) : null;
     $passport = !empty($_POST['passport_number']) ? temizle($_POST['passport_number']) : null;
     $tax_office = temizle($_POST['tax_office']);
     $tax_number = !empty($_POST['tax_number']) ? temizle($_POST['tax_number']) : null;
     
-    // GEÇİCİ KAYIT MANTIĞI
     if ($is_temporary) {
         $random_suffix = time() . rand(100,999);
         if ($type == 'real' && empty($tc) && empty($passport)) { $tc = 'G-TC-' . $random_suffix; } 
         if ($type == 'legal' && empty($tax_number)) { $tax_number = 'G-VN-' . $random_suffix; }
     }
 
-    // Diğerleri
     $contact = temizle($_POST['contact_name']);
     $email = temizle($_POST['email']);
     $phone = temizle($_POST['phone']);
@@ -75,13 +70,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $city = temizle($_POST['city']);
     $address = temizle($_POST['address']);
     
-    // YETKİ KONTROLÜ
     $has_balance_perm = (isset($_SESSION['role']) && ($_SESSION['role'] == 'admin' || $_SESSION['role'] == 'muhasebe'));
     $op_balance = ($has_balance_perm && !empty($_POST['opening_balance'])) ? (float)$_POST['opening_balance'] : 0;
     $op_curr = ($has_balance_perm && !empty($_POST['opening_balance_currency'])) ? $_POST['opening_balance_currency'] : 'TRY';
     $op_date = ($has_balance_perm && !empty($_POST['opening_balance_date'])) ? $_POST['opening_balance_date'] : date('Y-m-d');
 
-    // MÜKERRER KONTROLÜ
     $duplicate_error = false;
     $is_edit = isset($_POST['edit_id']) && !empty($_POST['edit_id']);
     $edit_id = $is_edit ? (int)$_POST['edit_id'] : 0;
@@ -121,7 +114,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$duplicate_error && !empty($title)) {
         if ($is_edit) {
-            // GÜNCELLEME
             $sql = "UPDATE customers SET 
                     customer_type=?, customer_code=?, company_name=?, contact_name=?, 
                     tc_number=?, passport_number=?, tax_office=?, tax_number=?, 
@@ -132,15 +124,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $type, $code, $title, $contact, $tc, $passport, $tax_office, $tax_number,
                 $email, $phone, $fax, $country, $city, $address, $edit_id
             ]);
-            
-            // LOGLAMA (Güncelleyen Kişiyle)
             log_action($pdo, 'customer', $edit_id, 'update', "$title carisi güncellendi. (Düzenleyen: $current_user_name)");
             $message = '<div class="alert alert-success">Cari kart güncellendi!</div>';
         } else {
-            // YENİ EKLEME
             $current_balance = $op_balance; 
             $created_by = $_SESSION['user_id'];
-
             $sql = "INSERT INTO customers (
                 customer_type, customer_code, company_name, contact_name, 
                 tc_number, passport_number, tax_office, tax_number, 
@@ -148,7 +136,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 opening_balance, opening_balance_currency, opening_balance_date, current_balance,
                 created_by
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-            
             $stmt = $pdo->prepare($sql);
             $stmt->execute([
                 $type, $code, $title, $contact, $tc, $passport, $tax_office, $tax_number,
@@ -156,10 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $op_balance, $op_curr, $op_date, $current_balance,
                 $created_by
             ]);
-            
             $last_id = $pdo->lastInsertId();
-            
-            // LOGLAMA (Oluşturan Kişiyle)
             log_action($pdo, 'customer', $last_id, 'create', "$title ($code) yeni cari kartı oluşturuldu. (Oluşturan: $current_user_name)");
             $message = '<div class="alert alert-success">Yeni cari kart oluşturuldu!</div>';
         }
@@ -168,28 +152,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// --- LİSTELEME VE ARAMA MANTIĞI ---
-$search = isset($_GET['q']) ? trim($_GET['q']) : '';
-$params = [];
+// --- LİSTELEME VE ARAMA MANTIĞI (DÜZELTİLDİ: Sadece Positional Parameters) ---
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+if($page < 1) $page = 1;
+$limit = 50; 
+$offset = ($page - 1) * $limit;
 
+$search = isset($_GET['q']) ? trim($_GET['q']) : '';
+$where_sql = "WHERE 1=1";
+$params = []; 
+
+if ($search) {
+    // 5 Tane soru işareti (?) var, params dizisine sırasıyla 5 tane ekliyoruz.
+    $where_sql .= " AND (c.company_name LIKE ? OR c.contact_name LIKE ? OR c.tax_number LIKE ? OR c.tc_number LIKE ? OR c.customer_code LIKE ?)";
+    $term = "%$search%";
+    $params[] = $term; // 1
+    $params[] = $term; // 2
+    $params[] = $term; // 3
+    $params[] = $term; // 4
+    $params[] = $term; // 5
+}
+
+// 1. Toplam Kayıt Sayısı
+$count_stmt = $pdo->prepare("SELECT COUNT(*) FROM customers c $where_sql");
+$count_stmt->execute($params); // Sadece arama parametreleri
+$total_records = $count_stmt->fetchColumn();
+$total_pages = ceil($total_records / $limit);
+
+// 2. Verileri Çek
+// DÜZELTME BURADA: Limit ve Offset değerlerini güvenli bir şekilde (int cast ederek) doğrudan SQL stringine ekledim.
+// Böylece ? ve :limit karışıklığı olmaz. Projects.php'de de böyle yapmıştık.
 $sql = "SELECT c.*, 
         (SELECT COUNT(*) FROM transactions WHERE customer_id = c.id) as tx_count,
         (
             c.opening_balance 
-            + COALESCE((SELECT SUM(amount) FROM transactions WHERE customer_id = c.id AND type = 'credit'), 0) 
-            - COALESCE((SELECT SUM(amount) FROM transactions WHERE customer_id = c.id AND type = 'debt'), 0)
+            + COALESCE((SELECT SUM(amount) FROM transactions WHERE customer_id = c.id AND type = 'credit' AND is_deleted=0), 0) 
+            - COALESCE((SELECT SUM(amount) FROM transactions WHERE customer_id = c.id AND type = 'debt' AND is_deleted=0), 0)
         ) as live_balance 
-        FROM customers c";
-
-if ($search) {
-    $sql .= " WHERE (c.company_name LIKE ? OR c.contact_name LIKE ? OR c.tax_number LIKE ? OR c.tc_number LIKE ? OR c.customer_code LIKE ?)";
-    $params = ["%$search%", "%$search%", "%$search%", "%$search%", "%$search%"];
-}
-
-$sql .= " ORDER BY c.id DESC";
+        FROM customers c
+        $where_sql
+        ORDER BY c.id DESC 
+        LIMIT $limit OFFSET $offset"; 
 
 $stmt = $pdo->prepare($sql);
-$stmt->execute($params);
+$stmt->execute($params); // Sadece arama parametrelerini (?) gönderiyoruz. Limit/Offset zaten string içinde.
 $customers = $stmt->fetchAll();
 ?>
 <!DOCTYPE html>
@@ -204,7 +210,6 @@ $customers = $stmt->fetchAll();
             background-color: #fff3cd; 
             border-left: 5px solid #ffc107;
         }
-        /* Tıklanabilir satır efekti */
         .clickable-row {
             cursor: pointer;
             transition: background-color 0.2s;
@@ -212,6 +217,7 @@ $customers = $stmt->fetchAll();
         .clickable-row:hover {
             background-color: #f1f3f5 !important;
         }
+        .pagination { justify-content: center; margin-top: 15px; }
     </style>
 </head>
 <body>
@@ -267,15 +273,17 @@ $customers = $stmt->fetchAll();
                         <tbody>
                             <?php if (count($customers) > 0): ?>
                                 <?php foreach ($customers as $c): ?>
-                                    
                                     <?php 
                                         $is_missing = false;
-                                        if (strpos($c['tc_number'], 'G-TC-') !== false || strpos($c['tax_number'], 'G-VN-') !== false) {
+                                        // Hem TC/Vergi No YOKSA hem de PASAPORT YOKSA eksik say.
+                                        $has_passport = !empty($c['passport_number']);
+                                        $has_temp_id = (strpos($c['tc_number'], 'G-TC-') !== false || strpos($c['tax_number'], 'G-VN-') !== false);
+                                        
+                                        if ($has_temp_id && !$has_passport) {
                                             $is_missing = true;
                                         }
-                                        $row_class = $is_missing ? 'missing-info' : '';
                                         
-                                        // Canlı Bakiye Rengi
+                                        $row_class = $is_missing ? 'missing-info' : '';
                                         $bal_val = $c['live_balance'];
                                         $bal_color = ($bal_val < 0) ? 'text-danger' : (($bal_val > 0) ? 'text-success' : 'text-muted');
                                     ?>
@@ -330,6 +338,39 @@ $customers = $stmt->fetchAll();
                         </tbody>
                     </table>
                 </div>
+
+                <?php if($total_pages > 1): ?>
+                <div class="card-footer bg-white">
+                    <nav aria-label="Sayfalama">
+                        <ul class="pagination mb-0">
+                            <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
+                                <a class="page-link" href="?page=<?php echo $page-1; ?>&q=<?php echo urlencode($search); ?>">Önceki</a>
+                            </li>
+                            
+                            <?php 
+                            $start_p = max(1, $page - 2);
+                            $end_p = min($total_pages, $page + 2);
+                            
+                            if($start_p > 1) echo '<li class="page-item disabled"><span class="page-link">...</span></li>';
+
+                            for($i = $start_p; $i <= $end_p; $i++): 
+                            ?>
+                                <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
+                                    <a class="page-link" href="?page=<?php echo $i; ?>&q=<?php echo urlencode($search); ?>"><?php echo $i; ?></a>
+                                </li>
+                            <?php endfor; ?>
+
+                            <?php if($end_p < $total_pages) echo '<li class="page-item disabled"><span class="page-link">...</span></li>'; ?>
+
+                            <li class="page-item <?php echo ($page >= $total_pages) ? 'disabled' : ''; ?>">
+                                <a class="page-link" href="?page=<?php echo $page+1; ?>&q=<?php echo urlencode($search); ?>">Sonraki</a>
+                            </li>
+                        </ul>
+                        <div class="text-center small text-muted mt-2">Toplam <?php echo $total_records; ?> kayıt, <?php echo $total_pages; ?> sayfa.</div>
+                    </nav>
+                </div>
+                <?php endif; ?>
+
             </div>
         </div>
     </div>
@@ -521,7 +562,6 @@ $customers = $stmt->fetchAll();
             .catch(error => { document.getElementById('historyContent').innerHTML = '<div class="alert alert-danger">Veri çekilemedi.</div>'; });
         }
 
-        // --- CARİ KOD ÜRETME ---
         function generateCustomerCode() {
             var name = document.getElementById('company_name').value;
             var type = document.getElementById('customer_type').value; 
@@ -541,7 +581,6 @@ $customers = $stmt->fetchAll();
                 });
         }
 
-        // --- GEÇİCİ KAYIT KONTROLÜ ---
         function toggleTemporary() {
             var isTemp = document.getElementById('is_temporary').checked;
             var taxInput = document.getElementById('tax_number');

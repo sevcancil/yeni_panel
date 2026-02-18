@@ -3,7 +3,7 @@
 session_start();
 require_once '../app/config/database.php';
 require_once '../app/functions/security.php';
-require_once '../app/functions/alerts.php'; // Sistem uyarılarını buradan çekiyoruz
+require_once '../app/functions/alerts.php'; 
 
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
@@ -11,8 +11,33 @@ $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'];
 $is_admin = ($role === 'admin' || $role === 'muhasebe');
 
-// --- 1. İSTATİSTİKLER (KPI) ---
-// Bu ayki toplam gelir/gider (Onaylanmış)
+// --- 0. GÜNCEL KURLAR ---
+$currency_list = [];
+$last_update = '-';
+
+try {
+    // Kurları çek (Önemli olanları başa al)
+    $sql_curr = "SELECT code, rate, updated_at FROM currencies 
+                 WHERE code != 'TRY' 
+                 ORDER BY FIELD(code, 'USD','EUR','GBP','CHF','CAD') DESC, code ASC";
+    $stmt = $pdo->query($sql_curr);
+    $currency_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($currency_list)) {
+        $last_update = date('H:i', strtotime($currency_list[0]['updated_at']));
+    }
+} catch (Exception $e) { }
+
+// Veri yoksa varsayılan göster
+if (empty($currency_list)) {
+    $currency_list = [
+        ['code' => 'USD', 'rate' => 0.0000],
+        ['code' => 'EUR', 'rate' => 0.0000],
+        ['code' => 'GBP', 'rate' => 0.0000]
+    ];
+}
+
+// --- 1. İSTATİSTİKLER ---
 $current_month = date('Y-m');
 $sql_stats = "SELECT 
     SUM(CASE WHEN type = 'payment_in' THEN amount ELSE 0 END) as total_in,
@@ -23,15 +48,11 @@ $sql_stats = "SELECT
 $stmt = $pdo->prepare($sql_stats);
 $stmt->execute([$current_month]);
 $stats = $stmt->fetch();
-
 $balance = $stats['total_in'] - $stats['total_out'];
 
-// --- 2. BİLDİRİMLERİ TOPLA ---
-// A) Sistem Uyarıları (alerts.php'den gelenler)
+// --- 2. BİLDİRİMLER ---
 $system_alerts = get_user_alerts($pdo, $user_id, $is_admin);
 
-// B) Muhasebe Mesajları (Veritabanından)
-// Hem bana özel (receiver_id = user_id) hem de herkese (receiver_id = 0) gönderilenler
 $sql_msgs = "SELECT n.*, u.full_name as sender_name 
              FROM notifications n 
              JOIN users u ON n.sender_id = u.id 
@@ -42,7 +63,7 @@ $stmt_msgs = $pdo->prepare($sql_msgs);
 $stmt_msgs->execute([$user_id]);
 $messages = $stmt_msgs->fetchAll();
 
-// --- 3. SON 5 İŞLEM (Hızlı Bakış) ---
+// --- 3. SON İŞLEMLER ---
 $sql_recent = "SELECT t.*, c.company_name 
                FROM transactions t 
                LEFT JOIN customers c ON t.customer_id = c.id
@@ -50,23 +71,17 @@ $sql_recent = "SELECT t.*, c.company_name
                ORDER BY t.created_at DESC LIMIT 5";
 $recent_trans = $pdo->query($sql_recent)->fetchAll();
 
-// --- 4. GRAFİK VERİSİ (Son 6 Ay) ---
-$chart_labels = [];
-$chart_income = [];
-$chart_expense = [];
+// --- 4. GRAFİK ---
+$chart_labels = []; $chart_income = []; $chart_expense = [];
 for ($i = 5; $i >= 0; $i--) {
     $d = date("Y-m", strtotime("-$i months"));
     $chart_labels[] = date("M Y", strtotime("-$i months"));
-    
-    // Basitçe o ayın toplamlarını çekelim
     $inc = $pdo->query("SELECT SUM(amount) FROM transactions WHERE type='payment_in' AND is_deleted=0 AND DATE_FORMAT(date, '%Y-%m')='$d'")->fetchColumn();
     $exp = $pdo->query("SELECT SUM(amount) FROM transactions WHERE type='payment_out' AND is_deleted=0 AND DATE_FORMAT(date, '%Y-%m')='$d'")->fetchColumn();
-    
     $chart_income[] = $inc ?? 0;
     $chart_expense[] = $exp ?? 0;
 }
 
-// Personel Listesi (Modal İçin)
 if($is_admin) {
     $users = $pdo->query("SELECT id, full_name FROM users WHERE id != $user_id")->fetchAll();
 }
@@ -79,7 +94,68 @@ if($is_admin) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
+        /* --- SABİT DÖVİZ BANDI CSS --- */
+        .currency-bar {
+            background-color: #212529; /* Siyah Zemin */
+            color: #fff;
+            padding: 8px 0;
+            border-bottom: 3px solid #dc3545; /* Altına ince kırmızı çizgi */
+            position: relative;
+        }
+        .currency-container {
+            display: flex;
+            justify-content: center; /* Ortala */
+            align-items: center;
+            flex-wrap: wrap; /* Sığmazsa alt satıra geç */
+            gap: 15px; /* Öğeler arası boşluk */
+        }
+        .currency-item {
+            display: flex;
+            align-items: center;
+            font-size: 0.9rem;
+            background: rgba(255,255,255,0.05); /* Hafif kutucuk efekti */
+            padding: 2px 2px;
+            border-radius: 4px;
+        }
+        .currency-code {
+            font-weight: bold;
+            color: #ffc107; /* Sarı Kod */
+            margin-right: 5px;
+        }
+        .currency-rate {
+            font-family: monospace;
+            font-weight: 500;
+        }
+        .currency-actions {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .tcmb-label {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: bold;
+            color: #dc3545;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        /* Mobilde yanlar sıkışmasın diye */
+        @media (max-width: 768px) {
+            .currency-actions, .tcmb-label { position: static; transform: none; margin-bottom: 5px; }
+            .currency-bar { text-align: center; }
+        }
+
+        /* Diğer Stiller */
         .icon-box { width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 24px; }
         .bg-gradient-primary { background: linear-gradient(45deg, #4e73df, #224abe); color: white; }
         .bg-gradient-success { background: linear-gradient(45deg, #1cc88a, #13855c); color: white; }
@@ -88,12 +164,44 @@ if($is_admin) {
         .notification-item { border-left: 4px solid #eee; transition: 0.2s; }
         .notification-item:hover { background-color: #f8f9fa; }
         .notification-item.msg { border-left-color: #0d6efd; }
-        .notification-item.alert { border-left-color: #ffc107; }
+        .notification-item.warning { border-left-color: #ffc107; }
         .notification-item.danger { border-left-color: #dc3545; }
+        .notification-item.info { border-left-color: #0dcaf0; }
     </style>
 </head>
 <body class="bg-light">
     <?php include 'includes/navbar.php'; ?>
+
+    <div class="currency-bar shadow-sm">
+        <div class="container-fluid position-relative">
+            <div class="tcmb-label d-none d-md-flex">
+                <i class="fa fa-university"></i> TCMB
+            </div>
+
+            <div class="currency-container">
+                <?php foreach ($currency_list as $curr): 
+                    $val = number_format($curr['rate'], 4);
+                ?>
+                    <div class="currency-item">
+                        <span class="currency-code"><?php echo htmlspecialchars($curr['code']); ?></span>
+                        <span class="currency-rate"><?php echo $val; ?></span>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+
+            <div class="currency-actions d-none d-md-flex">
+                <span class="text-secondary small" style="font-size: 0.75rem;">Son: <?php echo $last_update; ?></span>
+                <a href="currency-update.php" class="btn btn-xs btn-outline-light border-0" title="Şimdi Güncelle">
+                    <i class="fa fa-sync-alt text-warning"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="d-md-none text-center bg-dark py-1">
+        <a href="currency-update.php" class="text-warning text-decoration-none small"><i class="fa fa-sync-alt"></i> Kurları Güncelle (<?php echo $last_update; ?>)</a>
+    </div>
+
 
     <div class="container-fluid px-4 py-4">
         
@@ -104,11 +212,9 @@ if($is_admin) {
             </div>
             
             <?php if($is_admin): ?>
-            <div>
-                <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#msgModal">
-                    <i class="fa fa-paper-plane"></i> Bildirim Gönder
-                </button>
-            </div>
+            <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#msgModal">
+                <i class="fa fa-paper-plane"></i> Bildirim Gönder
+            </button>
             <?php endif; ?>
         </div>
 
@@ -151,15 +257,13 @@ if($is_admin) {
         </div>
 
         <div class="row">
-            
             <div class="col-lg-5 mb-4">
                 <div class="card shadow border-0 h-100">
                     <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
                         <h6 class="m-0 fw-bold text-primary"><i class="fa fa-bell"></i> Bildirim Merkezi</h6>
                         <span class="badge bg-danger rounded-pill"><?php echo count($system_alerts) + count($messages); ?></span>
                     </div>
-                    <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
-                        
+                    <div class="card-body p-0" style="max-height: 600px; overflow-y: auto;">
                         <?php if (empty($system_alerts) && empty($messages)): ?>
                             <div class="text-center p-5 text-muted">
                                 <i class="fa fa-check-circle fa-3x mb-3 text-light"></i>
@@ -180,38 +284,36 @@ if($is_admin) {
                         <?php endforeach; ?>
 
                         <?php foreach($system_alerts as $alert): 
-                            $border_class = ($alert['type'] == 'danger') ? 'danger' : 'alert';
-                            $icon_color = ($alert['type'] == 'danger') ? 'text-danger' : 'text-warning';
+                            $type_class = $alert['type'];
+                            $icon_color = 'text-' . $type_class;
+                            $href = '#'; $onclick = '';
+                            if (strpos($alert['link'], 'javascript:') === 0) {
+                                $onclick = 'onclick="' . substr($alert['link'], 11) . '"';
+                            } else {
+                                $href = $alert['link'];
+                            }
                         ?>
-                            <div class="p-3 border-bottom notification-item <?php echo $border_class; ?>">
+                            <div class="p-3 border-bottom notification-item <?php echo $type_class; ?>">
                                 <div class="d-flex">
-                                    <div class="me-3 mt-1 <?php echo $icon_color; ?>">
-                                        <i class="fa <?php echo $alert['icon']; ?> fa-lg"></i>
-                                    </div>
+                                    <div class="me-3 mt-1 <?php echo $icon_color; ?>"><i class="fa <?php echo $alert['icon']; ?> fa-lg"></i></div>
                                     <div class="flex-grow-1">
                                         <div class="fw-bold text-dark"><?php echo $alert['title']; ?></div>
                                         <div class="small text-muted my-1"><?php echo $alert['msg']; ?></div>
-                                        <a href="<?php echo $alert['link']; ?>" class="btn btn-sm btn-light border btn-block w-100 text-start">
-                                            <?php echo $alert['btn_text']; ?> <i class="fa fa-arrow-right float-end mt-1"></i>
+                                        <a href="<?php echo $href; ?>" <?php echo $onclick; ?> class="btn btn-sm btn-light border w-100 text-start">
+                                            <?php echo $alert['btn_text']; ?> <i class="fa fa-arrow-right float-end mt-1 text-secondary"></i>
                                         </a>
                                     </div>
                                 </div>
                             </div>
                         <?php endforeach; ?>
-
                     </div>
                 </div>
             </div>
 
             <div class="col-lg-7">
-                
                 <div class="card shadow border-0 mb-4">
-                    <div class="card-header bg-white py-3">
-                        <h6 class="m-0 fw-bold text-dark">Son 6 Ay Gelir/Gider Dengesi</h6>
-                    </div>
-                    <div class="card-body">
-                        <canvas id="dashboardChart" style="height: 250px;"></canvas>
-                    </div>
+                    <div class="card-header bg-white py-3"><h6 class="m-0 fw-bold text-dark">Son 6 Ay Gelir/Gider Dengesi</h6></div>
+                    <div class="card-body"><canvas id="dashboardChart" style="height: 250px;"></canvas></div>
                 </div>
 
                 <div class="card shadow border-0">
@@ -232,11 +334,8 @@ if($is_admin) {
                                     <td><?php echo mb_substr($t['company_name'] ?? '-', 0, 20); ?></td>
                                     <td class="fw-bold <?php echo $cls; ?>"><?php echo $sign . number_format($t['amount'], 2, ',', '.'); ?> ₺</td>
                                     <td>
-                                        <?php if($t['approval_status'] == 'approved'): ?>
-                                            <i class="fa fa-check-circle text-success" title="Onaylı"></i>
-                                        <?php else: ?>
-                                            <i class="fa fa-clock text-warning" title="Bekliyor"></i>
-                                        <?php endif; ?>
+                                        <?php if($t['approval_status'] == 'approved'): ?> <i class="fa fa-check-circle text-success" title="Onaylı"></i>
+                                        <?php else: ?> <i class="fa fa-clock text-warning" title="Bekliyor"></i> <?php endif; ?>
                                     </td>
                                 </tr>
                                 <?php endforeach; ?>
@@ -244,7 +343,6 @@ if($is_admin) {
                         </table>
                     </div>
                 </div>
-
             </div>
         </div>
     </div>
@@ -255,7 +353,7 @@ if($is_admin) {
             <div class="modal-content">
                 <form id="notificationForm">
                     <div class="modal-header bg-primary text-white">
-                        <h5 class="modal-title"><i class="fa fa-paper-plane"></i> Bildirim Gönder</h5>
+                        <h5 class="modal-title">Bildirim Gönder</h5>
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
@@ -268,28 +366,39 @@ if($is_admin) {
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="mb-3">
-                            <label>Konu</label>
-                            <input type="text" name="title" class="form-control" placeholder="Örn: Tur Kodu Eksikliği" required>
-                        </div>
-                        <div class="mb-3">
-                            <label>Mesaj</label>
-                            <textarea name="message" class="form-control" rows="4" placeholder="Mesajınızı buraya yazın..." required></textarea>
-                        </div>
+                        <div class="mb-3"><label>Konu</label><input type="text" name="title" class="form-control" required></div>
+                        <div class="mb-3"><label>Mesaj</label><textarea name="message" class="form-control" rows="4" required></textarea></div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                        <button type="submit" class="btn btn-primary">Gönder</button>
-                    </div>
+                    <div class="modal-footer"><button type="submit" class="btn btn-primary">Gönder</button></div>
                 </form>
             </div>
         </div>
     </div>
     <?php endif; ?>
 
+    <div class="modal fade" id="editModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">İşlem Düzenle</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="editModalBody"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // --- GRAFİK ---
+        const urlParams = new URLSearchParams(window.location.search);
+        if(urlParams.get('msg') === 'currency_updated') {
+            Swal.fire({ icon: 'success', title: 'Başarılı', text: 'Kurlar TCMB üzerinden güncellendi!', timer: 2000, showConfirmButton: false })
+            .then(() => { window.history.replaceState({}, document.title, window.location.pathname); });
+        } else if(urlParams.get('msg') === 'currency_error') {
+            Swal.fire({ icon: 'error', title: 'Hata', text: 'Kurlar güncellenemedi.' });
+        }
+
         const ctx = document.getElementById('dashboardChart').getContext('2d');
         new Chart(ctx, {
             type: 'line',
@@ -303,33 +412,29 @@ if($is_admin) {
             options: { responsive: true, maintainAspectRatio: false }
         });
 
-        // --- BİLDİRİM OKUNDU ---
         function markAsRead(id) {
-            fetch('api-notification-action.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'action=read&id=' + id
-            }).then(() => {
-                document.getElementById('msg-' + id).remove();
-            });
+            fetch('api-notification-action.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=read&id=' + id })
+            .then(() => { document.getElementById('msg-' + id).remove(); });
         }
 
-        // --- BİLDİRİM GÖNDER ---
         document.getElementById('notificationForm')?.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
             formData.append('action', 'send');
-            
-            fetch('api-notification-action.php', {
-                method: 'POST',
-                body: formData
-            })
+            fetch('api-notification-action.php', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(data => {
                 alert(data.message);
                 if(data.status === 'success') location.reload();
             });
         });
+
+        function openEditModal(id) {
+            var modal = new bootstrap.Modal(document.getElementById('editModal'));
+            modal.show();
+            $('#editModalBody').html('<div class="text-center p-4"><div class="spinner-border text-primary"></div></div>');
+            $('#editModalBody').load('transaction-edit.php?id=' + id);
+        }
     </script>
 </body>
 </html>

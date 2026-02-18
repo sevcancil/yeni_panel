@@ -22,7 +22,7 @@ function updateExchangeRates() {
                 $rate = (float)$currency->ForexSelling;
             }
 
-            if (in_array($code, ['USD', 'EUR', 'GBP'])) {
+            if (in_array($code, ['USD', 'EUR', 'GBP', 'AUD', 'DKK', 'CHF', 'SEK', 'CAD', 'KWD', 'NOK', 'SAR', 'JPY', 'AED', 'TRY'])) {
                 $stmt = $pdo->prepare("UPDATE currencies SET rate = :rate WHERE code = :code");
                 $stmt->execute(['rate' => $rate, 'code' => $code]);
             }

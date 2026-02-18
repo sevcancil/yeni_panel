@@ -43,20 +43,28 @@ function get_user_alerts($pdo, $user_id, $is_admin) {
         ];
     }
 
+// =================================================================
+    // 2. SENARYO: KİMLİK BİLGİSİ EKSİK OLANLAR (TC / Vergi / Pasaport)
     // =================================================================
-    // 2. SENARYO: VERGİ/TC NO EKSİK OLANLAR (Geçici Kod Kontrolü)
-    // =================================================================
-    // Mantık: 
-    // (Vergi No BOŞ VEYA Geçici) VE (TC No BOŞ VEYA Geçici) ise UYARI VER.
-    // Yani ikisinden en az biri "Gerçek" veri ise uyarı verme.
+    // Mantık: (Vergi No YOK) VE (TC No YOK) VE (Pasaport No YOK) ise uyarı ver.
+    // Yani bunlardan herhangi biri doluysa uyarı verme.
+    
+    // NOT: Veritabanında pasaport sütununun adı 'passport_number' varsayıldı.
+    // Eğer farklıysa (örn: passport_no) aşağıdan değiştirmelisin.
     
     $sql2 = "SELECT c.id, c.company_name, u.username 
              FROM customers c 
              LEFT JOIN users u ON c.created_by = u.id
              WHERE 
+             -- 1. Vergi No Geçersiz mi?
              (c.tax_number IS NULL OR c.tax_number = '' OR c.tax_number LIKE 'G-VN-%') 
              AND 
+             -- 2. TC No Geçersiz mi?
              (c.tc_number IS NULL OR c.tc_number = '' OR c.tc_number LIKE 'G-TC-%') 
+             AND
+             -- 3. Pasaport No Boş mu? (YENİ EKLENDİ)
+             (c.passport_number IS NULL OR c.passport_number = '')
+             
              AND $cust_filter
              ORDER BY c.id DESC LIMIT 50";
              
@@ -68,10 +76,11 @@ function get_user_alerts($pdo, $user_id, $is_admin) {
         $who = $is_admin ? "<strong>$creator</strong>: " : "Siz: ";
         
         $alerts[] = [
-            'type' => 'danger', // Kırmızı
+            'type' => 'danger', 
             'icon' => 'fa-id-card',
             'title' => 'Kimlik Bilgisi Eksik',
-            'msg' => $who . "<b>" . guvenli_html($row['company_name']) . "</b> için geçerli bir TC veya Vergi No girilmedi.",
+            // Mesajı da güncelledik
+            'msg' => $who . "<b>" . guvenli_html($row['company_name']) . "</b> için geçerli bir TC, Vergi No veya Pasaport girilmedi.",
             'link' => 'customers.php?edit_id=' . $row['id'], 
             'btn_text' => 'Tamamla'
         ];

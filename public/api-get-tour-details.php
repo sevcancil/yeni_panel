@@ -13,12 +13,16 @@ if (!isset($_SESSION['user_id'])) {
 $tour_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
 if ($tour_id > 0) {
-    $stmt = $pdo->prepare("SELECT department_id FROM tour_codes WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT department_id, status FROM tour_codes WHERE id = ?");
     $stmt->execute([$tour_id]);
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($result) {
-        echo json_encode(['status' => 'success', 'department_id' => $result['department_id']]);
+        if ($result['status'] === 'completed') {
+            echo json_encode(['status' => 'warning', 'message' => 'Bu proje tamamlanmış! İşlem yaparken dikkat ediniz.', 'department_id' => $result['department_id']]);
+        } else {
+            echo json_encode(['status' => 'success', 'department_id' => $result['department_id']]);
+        }
     } else {
         echo json_encode(['status' => 'error', 'message' => 'Kayıt bulunamadı']);
     }

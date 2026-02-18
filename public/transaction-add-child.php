@@ -304,6 +304,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                 <option value="USD" <?php echo ($parent['currency']=='USD')?'selected':''; ?>>USD ($)</option>
                                                 <option value="EUR" <?php echo ($parent['currency']=='EUR')?'selected':''; ?>>EUR (€)</option>
                                                 <option value="GBP" <?php echo ($parent['currency']=='GBP')?'selected':''; ?>>GBP (£)</option>
+                                                <option value="AUD" <?php echo ($parent['currency']=='AUD')?'selected':''; ?>>AUD ($)</option>
+                                                <option value="DKK" <?php echo ($parent['currency']=='DKK')?'selected':''; ?>>DKK (kr)</option>
+                                                <option value="CHF" <?php echo ($parent['currency']=='CHF')?'selected':''; ?>>CHF (CHF))</option>
+                                                <option value="SEK" <?php echo ($parent['currency']=='SEK')?'selected':''; ?>>SEK (kr)</option>
+                                                <option value="CAD" <?php echo ($parent['currency']=='CAD')?'selected':''; ?>>CAD ($)</option>
+                                                <option value="KWD" <?php echo ($parent['currency']=='KWD')?'selected':''; ?>>KWD (KD)</option>
+                                                <option value="NOK" <?php echo ($parent['currency']=='NOK')?'selected':''; ?>>NOK (kr)</option>
+                                                <option value="SAR" <?php echo ($parent['currency']=='SAR')?'selected':''; ?>>SAR</option>
+                                                <option value="JPY" <?php echo ($parent['currency']=='JPY')?'selected':''; ?>>JPY (¥)</option>
+                                                <option value="AED" <?php echo ($parent['currency']=='AED')?'selected':''; ?>>AED</option>
                                             </select>
                                         </div>
                                         <div class="col-md-4">

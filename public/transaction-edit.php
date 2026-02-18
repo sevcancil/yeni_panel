@@ -279,6 +279,16 @@ $display_rate = ($t['exchange_rate'] > 0) ? $t['exchange_rate'] : 1.0000;
                 <option value="USD" <?php echo $db_currency === 'USD' ? 'selected' : ''; ?>>USD</option>
                 <option value="EUR" <?php echo $db_currency === 'EUR' ? 'selected' : ''; ?>>EUR</option>
                 <option value="GBP" <?php echo $db_currency === 'GBP' ? 'selected' : ''; ?>>GBP</option>
+                <option value="AUD" <?php echo $db_currency === 'AUD' ? 'selected' : ''; ?>>AUD</option>
+                <option value="DKK" <?php echo $db_currency === 'DKK' ? 'selected' :''; ?>>DKK</option>
+                <option value="CHF" <?php echo $db_currency === 'CHF' ? 'selected' :''; ?>>CHF</option>
+                <option value="SEK" <?php echo $db_currency === 'SEK' ?'selected':''; ?>>SEK</option>
+                <option value="CAD" <?php echo $db_currency === 'CAD'?'selected':''; ?>>CAD</option>
+                <option value="KWD" <?php echo $db_currency === 'KWD'?'selected':''; ?>>KWD</option>
+                <option value="NOK" <?php echo $db_currency === 'NOK'?'selected':''; ?>>NOK</option>
+                <option value="SAR" <?php echo $db_currency === 'SAR'?'selected':''; ?>>SAR</option>
+                <option value="JPY" <?php echo $db_currency === 'JPY'?'selected':''; ?>>JPY</option>
+                <option value="AED" <?php echo $db_currency === 'AED'?'selected':''; ?>>AED</option>                
             </select>
         </div>
         <div class="col-md-3">

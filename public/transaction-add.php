@@ -9,7 +9,9 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 // Kullanıcı ve Sabit Veriler
 $user_id = $_SESSION['user_id'];
 $departments = $pdo->query("SELECT * FROM departments ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-$tours = $pdo->query("SELECT * FROM tour_codes WHERE status = 'active' ORDER BY code DESC")->fetchAll(PDO::FETCH_ASSOC);
+
+// --- DÜZELTME 1: Tur Kodlarını Kesin Olarak Çekiyoruz ---
+$tours = $pdo->query("SELECT id, code, name FROM tour_codes ORDER BY code DESC")->fetchAll(PDO::FETCH_ASSOC);
 
 // --- GET İLE GELEN VERİLER ---
 $pre_doc_type = $_GET['doc_type'] ?? 'payment_order';
@@ -26,15 +28,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $doc_type = $_POST['doc_type']; 
         $date = $_POST['date'];
         
-        // Cari ID Kontrolü
         $customer_id = !empty($_POST['customer_id']) ? $_POST['customer_id'] : null;
         if (!$customer_id) throw new Exception("Lütfen bir Cari Hesap seçiniz.");
 
-        // --- HATAYI ÇÖZEN KISIM (BOŞSA NULL YAP) ---
         $tour_code_id = !empty($_POST['tour_code_id']) ? $_POST['tour_code_id'] : null;
         $department_id = !empty($_POST['department_id']) ? $_POST['department_id'] : null;
         $bank_id_val = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
-        // ------------------------------------------
 
         $amount = (float)$_POST['amount'];
         $currency = $_POST['currency'];
@@ -48,12 +47,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $description = temizle($_POST['description']);
         $recipient_bank_id = null;
 
-        // ÖDEME KAYNAĞI VE DETAYLARI
+        // ÖDEME KAYNAĞI
         if ($doc_type === 'payment_order' && !empty($_POST['payment_source_simple'])) {
             $simple_source = temizle($_POST['payment_source_simple']);
             
             if ($simple_source == 'Havale/EFT') {
-                $recipient_bank_id = $bank_id_val; // Yukarıda düzelttiğimiz değişkeni kullanıyoruz
+                $recipient_bank_id = $bank_id_val; 
                 $description .= " [Yöntem: Havale/EFT]";
             } 
             elseif ($simple_source == 'Yurtdışı Banka') {
@@ -69,16 +68,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-// FATURA VE VADE DURUMU
-        $invoice_status = 'pending'; 
+        // --- DÜZELTME 2: Fatura Durumu Mantığı ---
+        // Varsayılan olarak 'waiting_approval' yapıyoruz ki listeye düşsün.
+        // Eskiden 'no_invoice' idi ve bu yüzden listelenmiyordu.
+        $invoice_status = 'waiting_approval'; 
+        
         $invoice_date = null;
         $due_date = null; 
 
+        // Eğer kullanıcı "Fatura Kesilsin" kutusunu işaretlediyse:
         if ($doc_type === 'invoice_order' && isset($_POST['issue_invoice_check'])) {
-            $invoice_status = 'to_be_issued';
+            $invoice_status = 'to_be_issued'; // Fatura Kesilecek Listesine Git
             $invoice_date = !empty($_POST['invoice_issue_date']) ? $_POST['invoice_issue_date'] : $date;
-            
-            // Vade Tarihi Kontrolü (Boşsa NULL olsun)
             $due_date = !empty($_POST['due_date']) ? $_POST['due_date'] : null;
             
             if(empty($description)) throw new Exception("Fatura kesilecek işlemler için Açıklama girmek zorunludur.");
@@ -89,6 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $description .= " [Fatura: $vat_msg]";
             }
         }
+        // ----------------------------------------
 
         $type = ($doc_type === 'payment_order') ? 'debt' : 'credit';
 
@@ -102,8 +104,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             $customer_id, 
-            $department_id, // Düzeltilmiş değişken (NULL veya ID)
-            $tour_code_id,  // Düzeltilmiş değişken (NULL veya ID)
+            $department_id,
+            $tour_code_id,
             $type, $doc_type,
             $amount, $currency, $original_amount, $exchange_rate,
             $date, $description, $invoice_status, 
@@ -181,6 +183,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <div class="input-group">
                                 <select name="customer_id" id="customer_id" class="form-select select2" onchange="fetchCustomerDetails()" required>
                                     <option value="">Seçiniz...</option>
+                                    <?php 
+                                        $customers = $pdo->query("SELECT id, company_name FROM customers ORDER BY company_name")->fetchAll(PDO::FETCH_ASSOC);
+                                        foreach($customers as $c) {
+                                            $sel = ($pre_customer == $c['id']) ? 'selected' : '';
+                                            echo '<option value="'.$c['id'].'" '.$sel.'>'.guvenli_html($c['company_name']).'</option>';
+                                        }
+                                    ?>
                                 </select>
                                 <button type="button" class="btn btn-outline-primary" onclick="window.open('customers.php', '_blank')"><i class="fa fa-plus"></i></button>
                             </div>
@@ -192,7 +201,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <select name="tour_code_id" id="tour_code_id" class="form-select select2" onchange="autoSelectDepartment()">
                                     <option value="">Genel / Projesiz</option>
                                     <?php foreach($tours as $t): ?>
-                                        <option value="<?php echo $t['id']; ?>"><?php echo $t['code'] . ' - ' . $t['name']; ?></option>
+                                        <option value="<?php echo $t['id']; ?>">
+                                            <?php echo guvenli_html($t['code']) . ' - ' . guvenli_html($t['name']); ?>
+                                        </option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>
@@ -223,6 +234,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <option value="USD">USD ($)</option>
                                     <option value="EUR">EUR (€)</option>
                                     <option value="GBP">GBP (£)</option>
+                                    <option value="AUD">AUD ($)</option>
+                                    <option value="DKK">DKK (kr)</option>
+                                    <option value="CHF">CHF</option>
+                                    <option value="SEK">SEK (kr)</option>
+                                    <option value="CAD">CAD ($)</option>
+                                    <option value="KWD">KWD (KD)</option>
+                                    <option value="NOK">NOK (kr)</option>
+                                    <option value="SAR">SAR</option>
+                                    <option value="JPY">JPY (¥)</option>
+                                    <option value="AED">AED</option>
                                 </select>
                             </div>
                             <div class="col-md-2 mb-3">
@@ -359,18 +380,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <script>
         $(document).ready(function() {
             $('.select2').select2({ theme: 'bootstrap-5', placeholder: "Seçiniz...", allowClear: true });
-            var customers = <?php echo json_encode($pdo->query("SELECT id, company_name FROM customers ORDER BY company_name")->fetchAll(PDO::FETCH_ASSOC)); ?>;
-            var sel = $('#customer_id');
-            $.each(customers, function(i, c) { sel.append(new Option(c.company_name, c.id)); });
-
+            
             var preCust = "<?php echo $pre_customer; ?>";
-            var isAuto = "<?php echo $is_auto_fill ? '1' : ''; ?>";
-
             if(preCust) {
                 $('#customer_id').val(preCust).trigger('change');
-                fetchCustomerDetails();
             }
 
+            var isAuto = "<?php echo $is_auto_fill ? '1' : ''; ?>";
             if(isAuto === '1') {
                 $('#issue_invoice_check').prop('checked', true);
                 toggleInvoiceDate(); 
@@ -401,7 +417,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // --- GÜNCELLENEN FONKSİYON: VADE TARİHİ VE KDV ZORUNLULUĞU ---
         function toggleInvoiceDate() {
             var chk = document.getElementById('issue_invoice_check');
             var div = document.getElementById('invoice_date_div');
@@ -412,24 +427,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if (chk.checked) {
                 div.classList.remove('d-none');
-                
-                // Zorunlu alanlar
                 desc.setAttribute('required', 'required'); 
-                dueDate.setAttribute('required', 'required'); // Vade Tarihi Zorunlu
-                
+                dueDate.setAttribute('required', 'required'); 
                 lbl.innerHTML = 'Açıklama <span class="text-danger">*</span> (Fatura Detayı)';
-                
                 for(var i=0; i<vatRadios.length; i++) vatRadios[i].required = true;
-
             } else {
                 div.classList.add('d-none');
-                
-                // Zorunluluğu Kaldır
                 desc.removeAttribute('required'); 
                 dueDate.removeAttribute('required'); 
-                
                 lbl.innerHTML = 'Açıklama';
-                
                 for(var i=0; i<vatRadios.length; i++) {
                     vatRadios[i].required = false;
                     vatRadios[i].checked = false; 
@@ -437,7 +443,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // ... (Diğer fonksiyonlar: togglePaymentSource, autoSelectDepartment, fetchCustomerDetails, updateRate, calcTL, openBankModal, saveBank - Aynı kalacak)
         function togglePaymentSource() {
             var src = document.getElementById('payment_source_simple').value;
             var bankDiv = document.getElementById('recipient_bank_div');
@@ -447,6 +452,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (src === 'Havale/EFT') { bankDiv.classList.remove('d-none'); } 
             else if (src === 'Yurtdışı Banka') { swiftDiv.classList.remove('d-none'); }
         }
+
         function autoSelectDepartment() {
             var tid = $('#tour_code_id').val();
             if(tid) {
@@ -455,6 +461,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }, 'json');
             }
         }
+
         function fetchCustomerDetails() {
             var id = $('#customer_id').val(); 
             if(!id) { $('#customer-history-section').addClass('d-none'); return; }
@@ -483,6 +490,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $('#customer-history-section').removeClass('d-none');
             }, 'json');
         }
+
         function updateRate() {
             var c = $('#currency').val();
             var r = $('#exchange_rate');
@@ -494,15 +502,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }, 'json'); 
             }
         }
+
         function calcTL() {
             var amt = parseFloat($('#amount').val())||0; 
             var rate = parseFloat($('#exchange_rate').val())||1;
             $('#amount_tl_display').val((amt*rate).toLocaleString('tr-TR',{minimumFractionDigits:2}) + ' ₺');
         }
+
         function openBankModal(){ 
             if(!$('#customer_id').val()) { Swal.fire('Uyarı','Cari seçiniz.','warning'); return; }
             new bootstrap.Modal(document.getElementById('addBankModal')).show(); 
         }
+
         function saveBank(){
             $.post('api-add-bank.php', {
                 customer_id:$('#modal_customer_id').val(), bank_name:$('#modal_bank_name').val(), iban:$('#modal_iban').val(), currency:$('#modal_currency').val()
